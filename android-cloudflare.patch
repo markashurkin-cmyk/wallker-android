@@ -1,0 +1,40 @@
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
+@@ -12,15 +12,23 @@
+ class ApiFailure(val status:Int,message:String):Exception(message)
+ object WallkerAPI {
+     suspend fun post(path:String,data:JSONObject,token:String?=null):JSONObject=withContext(Dispatchers.IO){
+-        val connection=URL("https://wallker-wallet.markashurkin.chatgpt.site"+path).openConnection() as HttpURLConnection
++        val connection=URL("https://wallker-wallet.markashurkin.workers.dev"+path).openConnection() as HttpURLConnection
+         try {
+             connection.requestMethod="POST";connection.connectTimeout=15000;connection.readTimeout=15000;connection.doOutput=true
++            connection.instanceFollowRedirects=false
+             connection.setRequestProperty("Content-Type","application/json")
+             if(token!=null)connection.setRequestProperty("Authorization","Bearer $token")
+             connection.outputStream.use{it.write(data.toString().toByteArray(Charsets.UTF_8))}
+             val status=connection.responseCode
+-            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader()?.use{it.readText()} ?: ""
+-            val result=try{JSONObject(raw)}catch(_:Exception){throw ApiFailure(status,"Сервер временно недоступен")}
++            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader(Charsets.UTF_8)?.use{it.readText().take(8192)} ?: ""
++            val result=try{JSONObject(raw)}catch(_:Exception){val cloudflare1010=raw.lowercase().contains("error code: 1010")
++                val detail=when {
++                    cloudflare1010 -> "Защита хостинга отклонила запрос: HTTP $status, Cloudflare 1010. Передай это сообщение разработчику."
++                    status in 300..399 -> "Сервер перенаправляет запрос привязки (HTTP $status). Передай это сообщение разработчику."
++                    status==403 -> "Доступ к серверу запрещён (HTTP 403, ответ не JSON). Передай это сообщение разработчику."
++                    else -> "Некорректный ответ сервера (HTTP $status, ответ не JSON). Передай это сообщение разработчику."
++                }
++                throw ApiFailure(status,detail)}
+             if(status !in 200..299)throw ApiFailure(status,result.optString("error","Ошибка сервера"))
+             result
+         }finally{connection.disconnect()}
+--- a/mobile/android/app/build.gradle.kts
++++ b/mobile/android/app/build.gradle.kts
+@@ -6,7 +6,7 @@
+     namespace = "com.wallker.wallet"
+     compileSdk = 36
+     buildToolsVersion = "36.0.0"
+-    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 3; versionName = "0.3.0" }
++    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 5; versionName = "0.3.2" }
+     signingConfigs {
+         if (hasReleaseSigning) create("wallkerRelease") {
+             storeFile = file(signingValues.getValue("WALLKER_KEYSTORE_PATH")!!)
