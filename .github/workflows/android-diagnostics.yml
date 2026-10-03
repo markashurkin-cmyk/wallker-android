@@ -1,9 +1,9 @@
-name: Build Android background release
+name: Build Android beta release
 
 on:
   push:
     paths:
-      - android-background.patch
+      - android-beta.patch
       - .github/workflows/android-diagnostics.yml
   workflow_dispatch:
 
@@ -29,9 +29,9 @@ jobs:
       - name: Extract Android source snapshot
         working-directory: .
         run: unzip -q Wallker-Android-CI.zip -d android-source
-      - name: Apply background service update
+      - name: Apply beta pairing update
         working-directory: .
-        run: git apply --directory=android-source/Wallker-Android-CI android-background.patch
+        run: git apply --directory=android-source/Wallker-Android-CI android-beta.patch
       - name: Set up Java 17
         uses: actions/setup-java@v6
         with:
@@ -68,13 +68,13 @@ jobs:
           gradle --no-daemon --stacktrace :app:assembleRelease
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
           mkdir -p release-output
-          cp app/build/outputs/apk/release/app-release.apk release-output/wallker-wallet-0.3.3.apk
+          cp app/build/outputs/apk/release/app-release.apk release-output/wallker-wallet-0.3.4.apk
           cd release-output
-          sha256sum wallker-wallet-0.3.3.apk > SHA256SUMS.txt
+          sha256sum wallker-wallet-0.3.4.apk > SHA256SUMS.txt
       - name: Upload signed release
         uses: actions/upload-artifact@v7
         with:
-          name: wallker-android-background
+          name: wallker-android-beta
           path: android-source/Wallker-Android-CI/mobile/android/release-output/
           if-no-files-found: error
           retention-days: 14
