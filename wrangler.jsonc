@@ -1,0 +1,23 @@
+{
+  "name": "wallker-wallet",
+  "main": "Wallker-Cloudflare-Server/worker.js",
+  "compatibility_date": "2026-10-02",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./Wallker-Cloudflare-Server/public",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wallker-wallet",
+      "database_id": "6ceddc00-80eb-4abc-a0b5-a03cec5ddf6a"
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGINS": ""
+  }
+}
