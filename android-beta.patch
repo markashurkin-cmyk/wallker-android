@@ -1,0 +1,258 @@
+--- a/mobile/android/app/build.gradle.kts
++++ b/mobile/android/app/build.gradle.kts
+@@ -6,7 +6,7 @@
+     namespace = "com.wallker.wallet"
+     compileSdk = 36
+     buildToolsVersion = "36.0.0"
+-    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 3; versionName = "0.3.0" }
++    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 7; versionName = "0.3.4" }
+     signingConfigs {
+         if (hasReleaseSigning) create("wallkerRelease") {
+             storeFile = file(signingValues.getValue("WALLKER_KEYSTORE_PATH")!!)
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/DeviceVault.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/DeviceVault.kt
+@@ -18,14 +18,15 @@
+         (store.getKey("wallker",null) as? SecretKey)?.let{return it}
+         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore").apply{init(KeyGenParameterSpec.Builder("wallker",KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())}.generateKey()
+     }
+-    fun save(token:String,timezone:String) {
++    fun save(token:String,timezone:String,accountId:String) {
+         val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key())
+-        prefs.edit().putString("token",Base64.encodeToString(c.doFinal(token.toByteArray()),Base64.NO_WRAP)).putString("iv",Base64.encodeToString(c.iv,Base64.NO_WRAP)).putString("timezone",timezone).apply()
++        check(prefs.edit().putString("token",Base64.encodeToString(c.doFinal(token.toByteArray()),Base64.NO_WRAP)).putString("iv",Base64.encodeToString(c.iv,Base64.NO_WRAP)).putString("timezone",timezone).putString("accountId",accountId).commit()){"Не удалось сохранить привязку"}
+     }
+     fun token():String? = try {
+         val encrypted=prefs.getString("token",null)
+         if(encrypted==null)null else{val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,Base64.decode(prefs.getString("iv",null),Base64.NO_WRAP)));String(c.doFinal(Base64.decode(encrypted,Base64.NO_WRAP)))}
+     }catch(_:Exception){null}
+     fun timezone():ZoneId=ZoneId.of(prefs.getString("timezone","Europe/Moscow"))
++    fun accountId():String?=prefs.getString("accountId",null)
+     fun clear(){prefs.edit().clear().apply()}
+ }
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
+@@ -13,6 +13,8 @@
+ import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.lifecycle.lifecycleScope
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.suspendCancellableCoroutine
++import kotlin.coroutines.resume
+ import org.json.JSONObject
+ 
+ class MainActivity:ComponentActivity(){
+@@ -36,14 +38,14 @@
+         super.onCreate(savedInstanceState);vault=DeviceVault(this);store=StepStore(this)
+         val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(32,64,32,32);setBackgroundColor(Color.rgb(20,23,24))}
+         fun text(value:String,size:Float=16f)=TextView(this).apply{text=value;textSize=size;setTextColor(Color.WHITE);setPadding(0,16,0,16)}
+-        layout.addView(text("Wallker Wallet",28f));layout.addView(text("Шаги сегодня"))
++        layout.addView(text("Wallker Wallet",28f));layout.addView(text("Версия "+packageManager.getPackageInfo(packageName,0).versionName,12f));layout.addView(text("Шаги сегодня"))
+         counter=text("0",52f);layout.addView(counter)
+         tracking=Button(this).apply{setOnClickListener{if(store.enabled()){store.setEnabled(false);stopService(Intent(this@MainActivity,StepService::class.java));store.setStatus("Шагомер приостановлен");refresh()}else requestCounter()}};layout.addView(tracking)
+         layout.addView(text("Носи телефон с собой. Шаги сохраняются без интернета. На Android работает постоянное уведомление шагомера."))
+         code=EditText(this).apply{hint="Код привязки из Telegram";setTextColor(Color.WHITE);setHintTextColor(Color.LTGRAY);inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS};layout.addView(code)
+         pair=Button(this).apply{text="Привязать Telegram";setOnClickListener{pairDevice()}};layout.addView(pair)
+         pending=text("");layout.addView(pending)
+-        sync=Button(this).apply{text="Передать сохранённые шаги";setOnClickListener{StepSyncWorker.now(this@MainActivity);store.setStatus("Передадим шаги при доступной связи");refresh()}};layout.addView(sync)
++        sync=Button(this).apply{text="Передать сохранённые шаги";setOnClickListener{StepSyncWorker.now(this@MainActivity);store.setSyncStatus("Передадим шаги при доступной связи");refresh()}};layout.addView(sync)
+         layout.addView(Button(this).apply{text="Отключить и очистить местные шаги";setOnClickListener{if(!busy){stopService(Intent(this@MainActivity,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}}})
+         status=text("");layout.addView(status)
+         layout.addView(text("Apple Health и Health Connect не используются. Передаются только дата и число шагов за последние семь дней. WC — игровые монеты бета-версии без вывода. После перезагрузки открой Wallker; остановка приложения системой может привести к пропускам."))
+@@ -52,6 +54,12 @@
+                 .setMessage("Шаги считаются датчиком телефона без GPS. Даты и суточные суммы хранятся на телефоне за сегодня и шесть предыдущих дней. После привязки они автоматически передаются по HTTPS на сервер Wallker при доступном интернете.\n\nTelegram передаёт серверу твой ID и имя. Сервер также хранит часовой пояс, историю шагов и привязку устройства. Локальный токен защищён Android Keystore; на сервере сохраняется его хеш.\n\nКнопка очистки удаляет местные шаги и токен. Для отзыва доступа открой раздел «Телефон» в Telegram и отключи устройство. Это не удаляет историю на сервере.\n\nКамера, геолокация, контакты, паспорт, Apple Health и Health Connect не используются. В этой версии нет рекламы, платежей или обмена WC на деньги.")
+                 .setPositiveButton("Понятно",null).show()
+         }})
++        layout.addView(Button(this).apply{text="Настройки фоновой работы";setOnClickListener{
++            AlertDialog.Builder(this@MainActivity).setTitle("Работа с выключенным экраном")
++                .setMessage("В настройках Wallker разреши физическую активность и уведомления. В разделе батареи выбери «Без ограничений». На Xiaomi / POCO дополнительно включи фоновый автозапуск Wallker. Затем включи шагомер и проверь шаги после прогулки с выключенным экраном.")
++                .setPositiveButton("Открыть настройки"){_,_->startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))}
++                .setNegativeButton("Закрыть",null).show()
++        }})
+         setContentView(ScrollView(this).apply{addView(layout)})
+         StepSyncWorker.schedule(this);refresh()
+     }
+@@ -59,10 +67,10 @@
+     override fun onStop(){handler.removeCallbacks(ticker);super.onStop()}
+     private fun refresh(){
+         counter.text="%,d".format(store.today());pending.text="Дней ожидают передачи: ${store.pending().days.size}"
+-        status.text=store.status().ifEmpty{"Включи шагомер и разреши физическую активность"}
++        status.text=listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"},store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n")
+         tracking.text=if(store.enabled())"Приостановить шагомер" else "Включить шагомер"
+         tracking.isEnabled=!busy;pair.isEnabled=!busy;code.isEnabled=!busy;sync.isEnabled=!busy && vault.token()!=null
+-        pair.text=if(vault.token()==null)"Привязать Telegram" else "Привязать заново (очистит местные шаги)"
++        pair.text=if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram"
+     }
+     private fun requestCounter(){
+         val sensors=getSystemService(SENSOR_SERVICE) as SensorManager
+@@ -74,8 +82,16 @@
+     }
+     private fun startCounter(){
+         try{store.setEnabled(true);startForegroundService(Intent(this,StepService::class.java))}
+-        catch(_:Exception){store.setEnabled(false);store.setStatus("Не удалось включить шагомер. Повтори при открытом Wallker.")}
++        catch(e:Exception){store.setEnabled(false);store.setStatus("Не удалось включить шагомер: ${e.javaClass.simpleName}. Повтори при открытом Wallker.")}
+         refresh()
++    }
++    private suspend fun confirmAccountChange(unknown:Boolean):Boolean=suspendCancellableCoroutine{continuation->
++        val dialog=AlertDialog.Builder(this).setTitle(if(unknown)"Проверить смену аккаунта" else "Другой аккаунт Telegram")
++            .setMessage((if(unknown)"Не удалось подтвердить, что это прежний аккаунт. " else "Этот код выдан другому Telegram-аккаунту. ")+"При продолжении местные шаги прежнего аккаунта будут очищены. Уже переданная история останется в его Telegram-кошельке. Продолжить?")
++            .setPositiveButton("Сменить аккаунт"){_,_->if(continuation.isActive)continuation.resume(true)}
++            .setNegativeButton("Отмена"){_,_->if(continuation.isActive)continuation.resume(false)}
++            .setOnCancelListener{if(continuation.isActive)continuation.resume(false)}.create()
++        continuation.invokeOnCancellation{dialog.dismiss()};dialog.show()
+     }
+     private fun pairDevice(){
+         if(busy)return
+@@ -84,10 +100,21 @@
+         lifecycleScope.launch{
+             busy=true;refresh()
+             try{
+-                val result=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android"))
+-                stopService(Intent(this@MainActivity,StepService::class.java));store.clear()
+-                vault.save(result.getString("token"),result.getString("timezone"));code.setText("")
+-                store.setStatus("Telegram привязан. Включи шагомер.")
++                val previousToken=vault.token();val previousAccount=vault.accountId()
++                val check=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("checkOnly",true),previousToken)
++                val accountId=check.getString("accountId")
++                val first=previousToken==null && previousAccount==null
++                val same=if(previousAccount!=null)previousAccount==accountId else check.optBoolean("sameAccount",false)
++                val unknown=previousAccount==null && check.isNull("sameAccount")
++                if(!first && !same && !confirmAccountChange(unknown))return@launch
++                val result=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("expectedAccountId",accountId),previousToken)
++                require(result.getString("accountId")==accountId){"Аккаунт изменился. Повтори привязку."}
++                val reset=!first && !same
++                if(reset){store.setEnabled(false);stopService(Intent(this@MainActivity,StepService::class.java))}
++                vault.save(result.getString("token"),result.getString("timezone"),accountId)
++                store.mergeHistory(result.getJSONArray("history"),reset);code.setText("")
++                store.setSyncStatus(if(reset)"Аккаунт сменён. История нового кошелька загружена." else "Привязка обновлена. Местные шаги сохранены.")
++                StepSyncWorker.now(this@MainActivity)
+             }catch(e:Exception){store.setStatus(e.message ?: "Не удалось привязать телефон")}
+             finally{busy=false;refresh()}
+         }
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
+@@ -13,6 +13,7 @@
+ class StepService:Service(),SensorEventListener {
+     private lateinit var sensors:SensorManager
+     private lateinit var store:StepStore
++    private var registered=false
+     override fun onCreate(){super.onCreate();sensors=getSystemService(SENSOR_SERVICE) as SensorManager;store=StepStore(this)}
+     override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int {
+         if(intent?.action=="STOP"){store.setEnabled(false);stopSelf();return START_NOT_STICKY}
+@@ -20,7 +21,8 @@
+         if(Build.VERSION.SDK_INT>=29 && checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION)!=PackageManager.PERMISSION_GRANTED){
+             store.setEnabled(false);store.setStatus("Разреши доступ к физической активности");stopSelf();return START_NOT_STICKY
+         }
+-        val sensor=sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
++        if(registered){runCatching{sensors.flush(this)};return START_STICKY}
++        val sensor=sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER,true) ?: sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+         if(sensor==null){store.setEnabled(false);store.setStatus("В этом телефоне нет датчика шагов");stopSelf();return START_NOT_STICKY}
+         val nm=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+         nm.createNotificationChannel(NotificationChannel("steps","Шагомер Wallker",NotificationManager.IMPORTANCE_LOW))
+@@ -31,17 +33,22 @@
+             .addAction(Notification.Action.Builder(Icon.createWithResource(this,android.R.drawable.ic_media_pause),"Приостановить",stop).build()).build()
+         try {
+             if(Build.VERSION.SDK_INT>=34)startForeground(1,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) else startForeground(1,notification)
+-            if(!sensors.registerListener(this,sensor,SensorManager.SENSOR_DELAY_NORMAL))error("Не удалось включить датчик шагов")
++            if(!sensors.registerListener(this,sensor,SensorManager.SENSOR_DELAY_NORMAL,0))error("Не удалось включить датчик шагов")
++            registered=true
+             store.setStatus("Шагомер работает")
+-        }catch(e:Exception){store.setEnabled(false);store.setStatus(e.message ?: "Не удалось запустить шагомер");stopSelf();return START_NOT_STICKY}
++        }catch(e:Exception){fail("Не удалось запустить шагомер: ${e.javaClass.simpleName}. ${e.message ?: "Проверь доступ к физической активности"}");return START_NOT_STICKY}
+         return START_STICKY
+     }
+     override fun onSensorChanged(event:SensorEvent){
+         if(event.sensor.type==Sensor.TYPE_STEP_COUNTER && event.values[0].isFinite() && event.values[0]>=0) {
+-            try{store.record(event.values[0].toLong(),event.timestamp)}catch(_:Exception){store.setEnabled(false);stopSelf()}
++            try{store.record(event.values[0].toLong(),event.timestamp)}catch(e:Exception){fail("Не удалось сохранить шаги: ${e.javaClass.simpleName}. Открой приложение и повтори запуск.")}
+         }
+     }
+     override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int){}
+-    override fun onDestroy(){sensors.unregisterListener(this);super.onDestroy()}
++    private fun fail(message:String){
++        runCatching{store.setEnabled(false);store.setStatus(message)}
++        stopForeground(STOP_FOREGROUND_REMOVE);stopSelf()
++    }
++    override fun onDestroy(){sensors.unregisterListener(this);registered=false;stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy()}
+     override fun onBind(intent:Intent?):IBinder?=null
+ }
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
+@@ -4,6 +4,7 @@
+ import android.provider.Settings
+ import android.os.SystemClock
+ import org.json.JSONObject
++import org.json.JSONArray
+ import java.time.Instant
+ import java.time.LocalDate
+ import java.util.UUID
+@@ -17,6 +18,8 @@
+     private fun date(now:Long)=Instant.ofEpochMilli(now).atZone(DeviceVault(context).timezone()).toLocalDate().toString()
+     fun enabled():Boolean=synchronized(lock){load().optBoolean("enabled")}
+     fun status():String=synchronized(lock){load().optString("status","")}
++    fun syncStatus():String=synchronized(lock){load().optString("syncStatus","")}
++    fun setSyncStatus(message:String)=synchronized(lock){val d=load();d.put("syncStatus",message);save(d)}
+     fun setStatus(message:String)=synchronized(lock){val d=load();d.put("status",message);save(d)}
+     fun setEnabled(value:Boolean)=synchronized(lock){
+         val d=load()
+@@ -24,6 +27,18 @@
+         d.put("enabled",value);save(d)
+     }
+     fun clear()=synchronized(lock){save(JSONObject().put("generation",UUID.randomUUID().toString()))}
++    fun mergeHistory(history:JSONArray,reset:Boolean)=synchronized(lock){
++        val d=if(reset)JSONObject().put("generation",UUID.randomUUID().toString()) else load()
++        val totals=d.optJSONObject("totals") ?: JSONObject()
++        val sent=d.optJSONObject("sent") ?: JSONObject()
++        for(i in 0 until history.length()){
++            val row=history.getJSONObject(i);val day=row.getString("day");val steps=row.getLong("steps")
++            require(steps in 0L..100000L)
++            totals.put(day,maxOf(totals.optLong(day,0),steps))
++            sent.put(day,maxOf(sent.optLong(day,0),steps))
++        }
++        d.put("totals",totals).put("sent",sent);prune(d);save(d)
++    }
+     fun record(counter:Long,timestampNanos:Long)=synchronized(lock){
+         val d=load();if(!d.optBoolean("enabled"))return@synchronized
+         val eventTime=System.currentTimeMillis()-(SystemClock.elapsedRealtimeNanos()-timestampNanos).coerceAtLeast(0)/1000000
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
+@@ -12,15 +12,23 @@
+ class ApiFailure(val status:Int,message:String):Exception(message)
+ object WallkerAPI {
+     suspend fun post(path:String,data:JSONObject,token:String?=null):JSONObject=withContext(Dispatchers.IO){
+-        val connection=URL("https://wallker-wallet.markashurkin.chatgpt.site"+path).openConnection() as HttpURLConnection
++        val connection=URL("https://wallker-wallet.markashurkin.workers.dev"+path).openConnection() as HttpURLConnection
+         try {
+             connection.requestMethod="POST";connection.connectTimeout=15000;connection.readTimeout=15000;connection.doOutput=true
++            connection.instanceFollowRedirects=false
+             connection.setRequestProperty("Content-Type","application/json")
+             if(token!=null)connection.setRequestProperty("Authorization","Bearer $token")
+             connection.outputStream.use{it.write(data.toString().toByteArray(Charsets.UTF_8))}
+             val status=connection.responseCode
+-            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader()?.use{it.readText()} ?: ""
+-            val result=try{JSONObject(raw)}catch(_:Exception){throw ApiFailure(status,"Сервер временно недоступен")}
++            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader(Charsets.UTF_8)?.use{it.readText().take(8192)} ?: ""
++            val result=try{JSONObject(raw)}catch(_:Exception){val cloudflare1010=raw.lowercase().contains("error code: 1010")
++                val detail=when {
++                    cloudflare1010 -> "Защита хостинга отклонила запрос: HTTP $status, Cloudflare 1010. Передай это сообщение разработчику."
++                    status in 300..399 -> "Сервер перенаправляет запрос привязки (HTTP $status). Передай это сообщение разработчику."
++                    status==403 -> "Доступ к серверу запрещён (HTTP 403, ответ не JSON). Передай это сообщение разработчику."
++                    else -> "Некорректный ответ сервера (HTTP $status, ответ не JSON). Передай это сообщение разработчику."
++                }
++                throw ApiFailure(status,detail)}
+             if(status !in 200..299)throw ApiFailure(status,result.optString("error","Ошибка сервера"))
+             result
+         }finally{connection.disconnect()}
+@@ -36,11 +44,11 @@
+                 WallkerAPI.post("/api/device/steps",JSONObject().put("day",day).put("steps",count),token)
+                 store.acknowledge(pending.generation,day,count)
+             }
+-            store.setStatus("Шаги переданы. Обнови баланс в Telegram.");Result.success()
++            store.setSyncStatus("Шаги переданы. Обнови баланс в Telegram.");Result.success()
+         }catch(e:ApiFailure){
+-            store.setStatus(if(e.status==401)"Привязка отозвана. Подключи Telegram заново." else "Шаги сохранены. Передача повторится позже.")
++            store.setSyncStatus(if(e.status==401)"Привязка отозвана. Подключи Telegram заново." else "Шаги сохранены. Передача повторится позже.")
+             if(e.status in 400..499 && e.status!=429)Result.failure() else Result.retry()
+-        }catch(_:Exception){store.setStatus("Нет связи. Шаги сохранены на телефоне.");Result.retry()}
++        }catch(_:Exception){store.setSyncStatus("Нет связи. Шаги сохранены на телефоне.");Result.retry()}
+     }
+     companion object {
+         private fun constraints()=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
