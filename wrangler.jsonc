@@ -18,6 +18,6 @@
     }
   ],
   "vars": {
-    "ALLOWED_ORIGINS": ""
+    "ALLOWED_ORIGINS": "", "BOT_AUTO_SETUP": "true"
   }
 }
