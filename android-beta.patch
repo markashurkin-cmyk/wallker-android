@@ -5,7 +5,7 @@
      compileSdk = 36
      buildToolsVersion = "36.0.0"
 -    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 3; versionName = "0.3.0" }
-+    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 7; versionName = "0.3.4" }
++    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 8; versionName = "0.3.5" }
      signingConfigs {
          if (hasReleaseSigning) create("wallkerRelease") {
              storeFile = file(signingValues.getValue("WALLKER_KEYSTORE_PATH")!!)
@@ -31,7 +31,23 @@
  }
 --- a/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
 +++ b/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
-@@ -13,6 +13,8 @@
+@@ -5,6 +5,15 @@
+ import android.content.Intent
+ import android.content.pm.PackageManager
+ import android.graphics.Color
++import android.graphics.Canvas
++import android.graphics.Paint
++import android.graphics.RectF
++import android.graphics.Typeface
++import android.graphics.drawable.GradientDrawable
++import android.content.res.ColorStateList
++import android.view.Gravity
++import android.view.View
++import android.view.WindowInsets
+ import android.hardware.Sensor
+ import android.hardware.SensorManager
+ import android.os.*
+@@ -13,6 +22,8 @@
  import androidx.activity.result.contract.ActivityResultContracts
  import androidx.lifecycle.lifecycleScope
  import kotlinx.coroutines.launch
@@ -40,50 +56,194 @@
  import org.json.JSONObject
  
  class MainActivity:ComponentActivity(){
-@@ -36,14 +38,14 @@
+@@ -25,6 +36,14 @@
+     private lateinit var pair:Button
+     private lateinit var tracking:Button
+     private lateinit var sync:Button
++    private lateinit var badge:TextView
++    private lateinit var connection:TextView
++    private lateinit var pairStatus:TextView
++    private lateinit var ring:StepRing
++    private val bg=Color.parseColor("#111512")
++    private val surface=Color.parseColor("#1a201b")
++    private val lime=Color.parseColor("#bdff58")
++    private val muted=Color.parseColor("#a9b4a9")
+     private var busy=false
+     private val handler=Handler(Looper.getMainLooper())
+     private val ticker=object:Runnable{override fun run(){refresh();handler.postDelayed(this,1000)}}
+@@ -34,35 +53,149 @@
+     private fun motionAllowed()=Build.VERSION.SDK_INT<29 || checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION)==PackageManager.PERMISSION_GRANTED
+     override fun onCreate(savedInstanceState:Bundle?){
          super.onCreate(savedInstanceState);vault=DeviceVault(this);store=StepStore(this)
-         val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(32,64,32,32);setBackgroundColor(Color.rgb(20,23,24))}
-         fun text(value:String,size:Float=16f)=TextView(this).apply{text=value;textSize=size;setTextColor(Color.WHITE);setPadding(0,16,0,16)}
+-        val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(32,64,32,32);setBackgroundColor(Color.rgb(20,23,24))}
+-        fun text(value:String,size:Float=16f)=TextView(this).apply{text=value;textSize=size;setTextColor(Color.WHITE);setPadding(0,16,0,16)}
 -        layout.addView(text("Wallker Wallet",28f));layout.addView(text("Шаги сегодня"))
-+        layout.addView(text("Wallker Wallet",28f));layout.addView(text("Версия "+packageManager.getPackageInfo(packageName,0).versionName,12f));layout.addView(text("Шаги сегодня"))
-         counter=text("0",52f);layout.addView(counter)
-         tracking=Button(this).apply{setOnClickListener{if(store.enabled()){store.setEnabled(false);stopService(Intent(this@MainActivity,StepService::class.java));store.setStatus("Шагомер приостановлен");refresh()}else requestCounter()}};layout.addView(tracking)
-         layout.addView(text("Носи телефон с собой. Шаги сохраняются без интернета. На Android работает постоянное уведомление шагомера."))
-         code=EditText(this).apply{hint="Код привязки из Telegram";setTextColor(Color.WHITE);setHintTextColor(Color.LTGRAY);inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS};layout.addView(code)
-         pair=Button(this).apply{text="Привязать Telegram";setOnClickListener{pairDevice()}};layout.addView(pair)
-         pending=text("");layout.addView(pending)
+-        counter=text("0",52f);layout.addView(counter)
+-        tracking=Button(this).apply{setOnClickListener{if(store.enabled()){store.setEnabled(false);stopService(Intent(this@MainActivity,StepService::class.java));store.setStatus("Шагомер приостановлен");refresh()}else requestCounter()}};layout.addView(tracking)
+-        layout.addView(text("Носи телефон с собой. Шаги сохраняются без интернета. На Android работает постоянное уведомление шагомера."))
+-        code=EditText(this).apply{hint="Код привязки из Telegram";setTextColor(Color.WHITE);setHintTextColor(Color.LTGRAY);inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS};layout.addView(code)
+-        pair=Button(this).apply{text="Привязать Telegram";setOnClickListener{pairDevice()}};layout.addView(pair)
+-        pending=text("");layout.addView(pending)
 -        sync=Button(this).apply{text="Передать сохранённые шаги";setOnClickListener{StepSyncWorker.now(this@MainActivity);store.setStatus("Передадим шаги при доступной связи");refresh()}};layout.addView(sync)
-+        sync=Button(this).apply{text="Передать сохранённые шаги";setOnClickListener{StepSyncWorker.now(this@MainActivity);store.setSyncStatus("Передадим шаги при доступной связи");refresh()}};layout.addView(sync)
-         layout.addView(Button(this).apply{text="Отключить и очистить местные шаги";setOnClickListener{if(!busy){stopService(Intent(this@MainActivity,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}}})
-         status=text("");layout.addView(status)
-         layout.addView(text("Apple Health и Health Connect не используются. Передаются только дата и число шагов за последние семь дней. WC — игровые монеты бета-версии без вывода. После перезагрузки открой Wallker; остановка приложения системой может привести к пропускам."))
-@@ -52,6 +54,12 @@
-                 .setMessage("Шаги считаются датчиком телефона без GPS. Даты и суточные суммы хранятся на телефоне за сегодня и шесть предыдущих дней. После привязки они автоматически передаются по HTTPS на сервер Wallker при доступном интернете.\n\nTelegram передаёт серверу твой ID и имя. Сервер также хранит часовой пояс, историю шагов и привязку устройства. Локальный токен защищён Android Keystore; на сервере сохраняется его хеш.\n\nКнопка очистки удаляет местные шаги и токен. Для отзыва доступа открой раздел «Телефон» в Telegram и отключи устройство. Это не удаляет историю на сервере.\n\nКамера, геолокация, контакты, паспорт, Apple Health и Health Connect не используются. В этой версии нет рекламы, платежей или обмена WC на деньги.")
-                 .setPositiveButton("Понятно",null).show()
-         }})
-+        layout.addView(Button(this).apply{text="Настройки фоновой работы";setOnClickListener{
-+            AlertDialog.Builder(this@MainActivity).setTitle("Работа с выключенным экраном")
-+                .setMessage("В настройках Wallker разреши физическую активность и уведомления. В разделе батареи выбери «Без ограничений». На Xiaomi / POCO дополнительно включи фоновый автозапуск Wallker. Затем включи шагомер и проверь шаги после прогулки с выключенным экраном.")
-+                .setPositiveButton("Открыть настройки"){_,_->startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))}
-+                .setNegativeButton("Закрыть",null).show()
-+        }})
-         setContentView(ScrollView(this).apply{addView(layout)})
+-        layout.addView(Button(this).apply{text="Отключить и очистить местные шаги";setOnClickListener{if(!busy){stopService(Intent(this@MainActivity,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}}})
+-        status=text("");layout.addView(status)
+-        layout.addView(text("Apple Health и Health Connect не используются. Передаются только дата и число шагов за последние семь дней. WC — игровые монеты бета-версии без вывода. После перезагрузки открой Wallker; остановка приложения системой может привести к пропускам."))
+-        layout.addView(Button(this).apply{text="Какие данные передаются";setOnClickListener{
+-            AlertDialog.Builder(this@MainActivity).setTitle("Данные Wallker")
+-                .setMessage("Шаги считаются датчиком телефона без GPS. Даты и суточные суммы хранятся на телефоне за сегодня и шесть предыдущих дней. После привязки они автоматически передаются по HTTPS на сервер Wallker при доступном интернете.\n\nTelegram передаёт серверу твой ID и имя. Сервер также хранит часовой пояс, историю шагов и привязку устройства. Локальный токен защищён Android Keystore; на сервере сохраняется его хеш.\n\nКнопка очистки удаляет местные шаги и токен. Для отзыва доступа открой раздел «Телефон» в Telegram и отключи устройство. Это не удаляет историю на сервере.\n\nКамера, геолокация, контакты, паспорт, Apple Health и Health Connect не используются. В этой версии нет рекламы, платежей или обмена WC на деньги.")
+-                .setPositiveButton("Понятно",null).show()
+-        }})
+-        setContentView(ScrollView(this).apply{addView(layout)})
++        buildInterface()
          StepSyncWorker.schedule(this);refresh()
++    }
++    private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
++    private fun shape(fill:Int, radius:Int=20, border:Boolean=false)=GradientDrawable().apply{
++        setColor(fill);cornerRadius=dp(radius).toFloat()
++        if(border)setStroke(dp(1),Color.parseColor("#303930"))
++    }
++    private fun label(value:String,size:Float=14f,color:Int=muted,bold:Boolean=false)=TextView(this).apply{
++        text=value;textSize=size;setTextColor(color)
++        if(bold)typeface=Typeface.create("sans-serif",Typeface.BOLD)
++    }
++    private fun stack()=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
++    private fun LinearLayout.put(view:View, gap:Int=0){
++        addView(view,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(gap)})
++    }
++    private fun card()=stack().apply{background=shape(surface,border=true);setPadding(dp(20),dp(20),dp(20),dp(20))}
++    private fun action(title:String,primary:Boolean=false,click:()->Unit)=Button(this).apply{
++        text=title;isAllCaps=false;textSize=14f;typeface=Typeface.create("sans-serif",Typeface.BOLD)
++        setTextColor(if(primary)bg else Color.parseColor("#f4f7f1"))
++        background=shape(if(primary)lime else Color.parseColor("#303a30"),12)
++        backgroundTintList=ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled),intArrayOf()),intArrayOf(Color.parseColor("#303930"),if(primary)lime else Color.parseColor("#303a30")))
++        minHeight=dp(52);minimumHeight=dp(52);setPadding(dp(16),dp(10),dp(16),dp(10))
++        setOnClickListener{click()}
++    }
++    private fun openTelegram(){
++        try{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://t.me/wallker_wallet_bot")))}
++        catch(_:android.content.ActivityNotFoundException){Toast.makeText(this,"Установи Telegram или браузер",Toast.LENGTH_LONG).show()}
++    }
++    private fun showBackgroundHelp(){
++        AlertDialog.Builder(this).setTitle("Работа с выключенным экраном")
++            .setMessage("Разреши физическую активность и уведомления. В настройках батареи выбери «Без ограничений». На Xiaomi / POCO включи фоновый автозапуск Wallker. После перезагрузки телефона открой приложение и проверь, что шагомер включён.")
++            .setPositiveButton("Открыть настройки"){_,_->startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))}
++            .setNegativeButton("Закрыть",null).show()
++    }
++    private fun showPrivacy(){
++        AlertDialog.Builder(this).setTitle("Данные Wallker")
++            .setMessage("Шаги считаются датчиком телефона без GPS. На телефоне хранятся даты и суммы за последние семь дней. После привязки они передаются по HTTPS на сервер Wallker при доступной связи. Telegram передаёт ID и имя; сервер хранит часовой пояс, историю и привязку. Токен на телефоне защищён Android Keystore.\n\nОчистка удаляет местные шаги и токен. Для отзыва доступа также отключи устройство в разделе «Телефон» в Telegram. Серверная история сохраняется.\n\nКамера, геолокация, контакты, Apple Health и Health Connect не используются. WC — игровые монеты бета-версии без вывода; рекламы и платежей нет.")
++            .setPositiveButton("Понятно",null).show()
++    }
++    private fun buildInterface(){
++        val root=stack().apply{setBackgroundColor(bg)}
++        root.setOnApplyWindowInsetsListener{v,insets->
++            if(Build.VERSION.SDK_INT>=30){
++                val safe=insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
++                v.setPadding(safe.left,safe.top,safe.right,safe.bottom)
++            }else v.setPadding(insets.systemWindowInsetLeft,insets.systemWindowInsetTop,insets.systemWindowInsetRight,insets.systemWindowInsetBottom)
++            insets
++        }
++        val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(20),dp(18),dp(20),dp(16))}
++        header.addView(label("W",27f,bg,true).apply{gravity=Gravity.CENTER;background=shape(lime,13)},LinearLayout.LayoutParams(dp(44),dp(44)))
++        header.addView(stack().apply{put(label("wallker",23f,Color.WHITE,true));put(label("W A L L E T  /  A N D R O I D",10f))},LinearLayout.LayoutParams(0,-2,1f).apply{leftMargin=dp(12)})
++        header.addView(label("БЕТА",11f,lime,true).apply{background=shape(Color.parseColor("#283322"),20);setPadding(dp(12),dp(7),dp(12),dp(7))})
++        root.put(header)
++        val scroll=ScrollView(this).apply{isFillViewport=true;clipToPadding=false}
++        root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
++        val body=stack().apply{setPadding(dp(20),dp(8),dp(20),dp(24))};scroll.addView(body)
++        val home=stack();val phone=stack();val settings=stack()
++        body.put(home);body.put(phone);body.put(settings)
++        home.put(label("ТВОЯ АКТИВНОСТЬ",11f,muted,true))
++        home.put(label("Каждый шаг важен",28f,Color.WHITE,true),8)
++        home.put(label("Гуляй. Сохраняй шаги. Продолжай в Telegram."),8)
++        val activity=card();home.put(activity,24)
++        val title=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
++        title.addView(label("Шаги сегодня",17f,Color.WHITE,true),LinearLayout.LayoutParams(0,-2,1f))
++        badge=label("",11f,lime,true);title.addView(badge);activity.put(title)
++        val circle=FrameLayout(this)
++        ring=StepRing(this).apply{importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};circle.addView(ring,FrameLayout.LayoutParams(-1,-1))
++        val numbers=stack().apply{gravity=Gravity.CENTER}
++        numbers.put(label("СЕГОДНЯ",11f,lime,true).apply{gravity=Gravity.CENTER})
++        counter=label("0",48f,Color.WHITE,true).apply{gravity=Gravity.CENTER;maxLines=1;setAutoSizeTextTypeUniformWithConfiguration(24,48,1,android.util.TypedValue.COMPLEX_UNIT_SP)};numbers.put(counter,4)
++        numbers.put(label("шагов на телефоне",12f).apply{gravity=Gravity.CENTER},4)
++        circle.addView(numbers,FrameLayout.LayoutParams(-1,-1))
++        activity.addView(circle,LinearLayout.LayoutParams(-1,dp(258)).apply{topMargin=dp(12);bottomMargin=dp(12)})
++        tracking=action("Включить шагомер",true){
++            if(store.enabled()){store.setEnabled(false);stopService(Intent(this,StepService::class.java));store.setStatus("Шагомер приостановлен");refresh()}else requestCounter()
++        };activity.put(tracking)
++        activity.put(label("Носи телефон с собой. Шаги сохраняются даже без интернета.",12f),14)
++        val transfer=card();home.put(transfer,16)
++        transfer.put(label("Синхронизация",17f,Color.WHITE,true))
++        pending=label("");transfer.put(pending,10)
++        sync=action("Передать сохранённые шаги",true){StepSyncWorker.now(this);store.setSyncStatus("Передадим шаги при доступной связи");refresh()};transfer.put(sync,16)
++        status=label("",13f);transfer.put(status,14)
++        home.put(action("Открыть кошелёк в Telegram"){openTelegram()},16)
++        home.put(label("Баланс WC и награды доступны в Mini App.",12f).apply{gravity=Gravity.CENTER},12)
++        phone.put(label("ТВОЙ АККАУНТ",11f,muted,true))
++        phone.put(label("Подключение Telegram",28f,Color.WHITE,true),8)
++        phone.put(label("Свяжи телефон с кошельком, чтобы передавать шаги."),8)
++        val pairing=card();phone.put(pairing,24)
++        connection=label("",16f,lime,true);pairing.put(connection)
++        pairing.put(label("1. Открой бота и раздел «Телефон».\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда."),16)
++        pairing.put(action("Получить код в Telegram"){openTelegram()},16)
++        code=EditText(this).apply{
++            hint="Вставь код привязки";textSize=14f;setTextColor(Color.WHITE);setHintTextColor(muted)
++            background=shape(bg,12,true);setPadding(dp(14),dp(14),dp(14),dp(14));minHeight=dp(56)
++            inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
++            isSingleLine=true;importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
++        };pairing.put(code,16)
++        pair=action("Привязать Telegram",true){pairDevice()};pairing.put(pair,12)
++        pairStatus=label("",13f);pairing.put(pairStatus,14)
++        pairing.put(label("При повторной привязке к тому же аккаунту местные шаги сохраняются. Telegram может быть на другом телефоне.",12f),16)
++        settings.put(label("ПРИЛОЖЕНИЕ",11f,muted,true))
++        settings.put(label("Настройки",28f,Color.WHITE,true),8)
++        val options=card();settings.put(options,24)
++        options.put(label("Считай шаги в фоне",17f,Color.WHITE,true))
++        options.put(label("Разреши уведомления, физическую активность и работу без ограничений батареи."),10)
++        options.put(action("Настройки фоновой работы"){showBackgroundHelp()},16)
++        options.put(action("Какие данные передаются"){showPrivacy()},12)
++        val clear=card();settings.put(clear,16)
++        clear.put(label("Управление устройством",17f,Color.WHITE,true))
++        clear.put(label("Очистка удалит привязку и ещё не переданные шаги с этого телефона."),10)
++        clear.put(action("Отключить и очистить"){
++            if(!busy)AlertDialog.Builder(this).setTitle("Очистить данные телефона?")
++                .setMessage("Местные шаги и привязка будут удалены. Уже переданная история останется в Telegram.")
++                .setPositiveButton("Очистить"){_,_->stopService(Intent(this,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}
++                .setNegativeButton("Отмена",null).show()
++        },16)
++        settings.put(label("Wallker Wallet • "+packageManager.getPackageInfo(packageName,0).versionName+"\nБета-версия. WC — игровые монеты без вывода.",12f).apply{gravity=Gravity.CENTER},24)
++        val nav=LinearLayout(this).apply{setPadding(dp(12),dp(10),dp(12),dp(10));background=shape(surface,0)}
++        val pages=listOf(home,phone,settings)
++        val tabs=listOf("Шаги","Telegram","Настройки").map{label(it,13f,muted,true).apply{
++            gravity=Gravity.CENTER;minHeight=dp(48);isClickable=true;isFocusable=true
++        }}
++        fun select(index:Int){pages.forEachIndexed{i,page->page.visibility=if(i==index)View.VISIBLE else View.GONE};tabs.forEachIndexed{i,t->t.setTextColor(if(i==index)lime else muted);t.background=shape(if(i==index)Color.parseColor("#283322") else surface,12);t.isSelected=i==index};scroll.scrollTo(0,0)}
++        tabs.forEachIndexed{i,t->nav.addView(t,LinearLayout.LayoutParams(0,-2,1f).apply{marginStart=dp(3);marginEnd=dp(3)});t.setOnClickListener{select(i)}}
++        root.put(nav);setContentView(root);root.requestApplyInsets();select(0)
      }
-@@ -59,10 +67,10 @@
+     override fun onStart(){super.onStart();handler.post(ticker);if(store.enabled() && motionAllowed())startCounter();StepSyncWorker.now(this)}
      override fun onStop(){handler.removeCallbacks(ticker);super.onStop()}
      private fun refresh(){
-         counter.text="%,d".format(store.today());pending.text="Дней ожидают передачи: ${store.pending().days.size}"
+-        counter.text="%,d".format(store.today());pending.text="Дней ожидают передачи: ${store.pending().days.size}"
 -        status.text=store.status().ifEmpty{"Включи шагомер и разреши физическую активность"}
++        val today=store.today();counter.text="%,d".format(today)
++        ring.active=store.enabled()
++        badge.text=if(store.enabled())"● ВКЛЮЧЁН" else "НА ПАУЗЕ"
++        badge.setTextColor(if(store.enabled())lime else muted)
++        val connected=vault.token()!=null
++        connection.text=if(connected)"Telegram подключён" else "Telegram не подключён"
++        pairStatus.text=listOf(store.status(),store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n")
++        val days=store.pending().days.size
++        pending.text=if(!connected)"Подключи Telegram в нижнем меню" else if(days==0)"Все сохранённые шаги переданы" else "Дней ожидают передачи: $days"
 +        status.text=listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"},store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n")
          tracking.text=if(store.enabled())"Приостановить шагомер" else "Включить шагомер"
          tracking.isEnabled=!busy;pair.isEnabled=!busy;code.isEnabled=!busy;sync.isEnabled=!busy && vault.token()!=null
 -        pair.text=if(vault.token()==null)"Привязать Telegram" else "Привязать заново (очистит местные шаги)"
-+        pair.text=if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram"
++        pair.text=if(busy)"Подключаем…" else if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram"
      }
      private fun requestCounter(){
          val sensors=getSystemService(SENSOR_SERVICE) as SensorManager
-@@ -74,8 +82,16 @@
+@@ -74,8 +207,16 @@
      }
      private fun startCounter(){
          try{store.setEnabled(true);startForegroundService(Intent(this,StepService::class.java))}
@@ -101,7 +261,7 @@
      }
      private fun pairDevice(){
          if(busy)return
-@@ -84,10 +100,21 @@
+@@ -84,12 +225,40 @@
          lifecycleScope.launch{
              busy=true;refresh()
              try{
@@ -127,6 +287,25 @@
              }catch(e:Exception){store.setStatus(e.message ?: "Не удалось привязать телефон")}
              finally{busy=false;refresh()}
          }
+     }
+ }
++
++// Decorative activity ring: it does not imply a daily goal or WC reward.
++private class StepRing(context:android.content.Context):View(context){
++    var active=false
++        set(value){if(field!=value){field=value;invalidate()}}
++    private val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE;strokeCap=Paint.Cap.ROUND}
++    override fun onDraw(canvas:Canvas){
++        super.onDraw(canvas)
++        val stroke=10*resources.displayMetrics.density;paint.strokeWidth=stroke
++        val diameter=minOf(width,height)-stroke*3
++        val left=(width-diameter)/2;val top=(height-diameter)/2
++        val bounds=RectF(left,top,left+diameter,top+diameter)
++        paint.color=Color.parseColor("#333e2c");canvas.drawOval(bounds,paint)
++        paint.color=Color.parseColor(if(active)"#bdff58" else "#526348")
++        canvas.drawArc(bounds,-90f,if(active)280f else 45f,false,paint)
++    }
++}
 --- a/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
 +++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
 @@ -13,6 +13,7 @@
