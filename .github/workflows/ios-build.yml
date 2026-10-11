@@ -28,3 +28,35 @@ jobs:
       - name: Build for simulator
         working-directory: ios-source/Walker-iOS
         run: xcodebuild -project WalkerWallet.xcodeproj -scheme Wallker -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
+      - name: Package IPA for AltStore signing
+        working-directory: ios-source/Walker-iOS
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib, plistlib, struct, zipfile
+          app = pathlib.Path('build/Build/Products/Release-iphoneos/Wallker.app')
+          info = plistlib.loads((app / 'Info.plist').read_bytes())
+          assert info['CFBundleIdentifier'] == 'com.wallker.wallet.ios'
+          assert info['CFBundleShortVersionString'] == '0.1.0'
+          executable = app / info['CFBundleExecutable']
+          header = executable.read_bytes()[:12]
+          magic, cpu = struct.unpack('<II', header[:8])
+          assert magic == 0xfeedfacf and cpu == 0x0100000c, 'Expected arm64 iPhone executable'
+          assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Simulator cannot run on iPhone'
+          output = pathlib.Path('Walker-Wallet-0.1.0-AltStore.ipa')
+          with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for file in sorted(app.rglob('*')):
+                  if file.is_file():
+                      archive.write(file, pathlib.Path('Payload') / app.name / file.relative_to(app))
+          with zipfile.ZipFile(output) as archive:
+              assert archive.testzip() is None
+              assert 'Payload/Wallker.app/Info.plist' in archive.namelist()
+          print('Packaged iPhone arm64 IPA for local signing by AltStore; not signed by Apple yet.')
+          PYTHON
+          shasum -a 256 Walker-Wallet-0.1.0-AltStore.ipa
+      - name: Save IPA for AltStore
+        uses: actions/upload-artifact@v4
+        with:
+          name: Walker-Wallet-0.1.0-AltStore
+          path: ios-source/Walker-iOS/Walker-Wallet-0.1.0-AltStore.ipa
+          if-no-files-found: error
+          retention-days: 14
