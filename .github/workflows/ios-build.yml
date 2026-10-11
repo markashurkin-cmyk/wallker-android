@@ -1,0 +1,30 @@
+name: Build Walker Wallet iOS
+on:
+  push:
+    paths:
+      - Walker-iOS-0.1.0.zip
+      - .github/workflows/ios-build.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Extract iOS source
+        run: unzip -q Walker-iOS-0.1.0.zip -d ios-source
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios-source/Walker-iOS
+        run: xcodegen generate
+      - name: Build for iPhone without signing
+        working-directory: ios-source/Walker-iOS
+        run: xcodebuild -project WalkerWallet.xcodeproj -scheme Wallker -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Build for simulator
+        working-directory: ios-source/Walker-iOS
+        run: xcodebuild -project WalkerWallet.xcodeproj -scheme Wallker -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
