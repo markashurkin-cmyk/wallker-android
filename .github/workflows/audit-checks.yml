@@ -1,0 +1,58 @@
+name: Walker audit regression and mobile UI
+on:
+  push:
+    paths:
+      - Wallker-Cloudflare-Server.zip
+      - .github/workflows/audit-checks.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            engine: chromium
+          - os: macos-26
+            engine: webkit
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server-source/Wallker-Cloudflare-Server
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Extract reviewed server source
+        working-directory: .
+        run: unzip -q Wallker-Cloudflare-Server.zip -d server-source
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Server regressions and D1 request budget
+        run: |
+          npm test
+          node tests/performance.mjs
+      - name: Build UI and restore integrity-checked assets
+        run: npm run build
+      - name: Install browser for UI checks
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps ${{ matrix.engine }}
+      - name: Check circle on narrow phone screens
+        env:
+          WALKER_UI_ENGINE: ${{ matrix.engine }}
+          WALKER_UI_SCREENSHOT: tap-fixed-${{ matrix.engine }}.png
+        run: node tests/ui.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: walker-audit-ui-${{ matrix.engine }}
+          path: server-source/Wallker-Cloudflare-Server/tap-fixed-${{ matrix.engine }}.png
+          if-no-files-found: error
+          retention-days: 14
+
