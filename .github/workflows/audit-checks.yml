@@ -1,4 +1,4 @@
-name: Walker audit regression and mobile UI
+name: Walker Growth regression and mobile UI
 on:
   push:
     paths:
@@ -32,10 +32,9 @@ jobs:
       - name: Extract reviewed server source
         working-directory: .
         run: unzip -q Wallker-Cloudflare-Server.zip -d server-source
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-      - name: Server regressions and D1 request budget
+      - name: Server and Growth regressions with D1 budget
         run: |
+          npm install --no-audit --no-fund
           npm test
           node tests/performance.mjs
       - name: Build UI and restore integrity-checked assets
@@ -44,15 +43,15 @@ jobs:
         run: |
           npm install --no-save playwright
           npx playwright install --with-deps ${{ matrix.engine }}
-      - name: Check circle on narrow phone screens
+      - name: Check RU/EN Growth and circle at four phone widths
         env:
           WALKER_UI_ENGINE: ${{ matrix.engine }}
           WALKER_UI_SCREENSHOT: tap-fixed-${{ matrix.engine }}.png
         run: node tests/ui.mjs
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: walker-audit-ui-${{ matrix.engine }}
-          path: server-source/Wallker-Cloudflare-Server/tap-fixed-${{ matrix.engine }}.png
-          if-no-files-found: error
+          name: walker-growth-ui-${{ matrix.engine }}
+          path: server-source/Wallker-Cloudflare-Server/*.png
+          if-no-files-found: warn
           retention-days: 14
-
