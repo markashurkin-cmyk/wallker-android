@@ -18,6 +18,29 @@
     }
   ],
   "vars": {
-    "ALLOWED_ORIGINS": "", "BOT_AUTO_SETUP": "true"
+    "ALLOWED_ORIGINS": "",
+    "BOT_AUTO_SETUP": "true",
+    "STARS_PAYMENTS_ENABLED": "true"
+  },
+  "keep_vars": true,
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
+  "previews": {
+    "vars": {
+      "ALLOWED_ORIGINS": "",
+      "BOT_AUTO_SETUP": "false",
+      "STARS_PAYMENTS_ENABLED": "false",
+      "GROWTH_PREVIEW": "true"
+    },
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "walker-wallet-preview",
+        "database_id": "3f8a5ba5-8abe-428e-8d1f-b9b2decc82e3"
+      }
+    ]
   }
 }
