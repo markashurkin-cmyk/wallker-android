@@ -1,0 +1,268 @@
+--- a/mobile/android/app/build.gradle.kts
++++ b/mobile/android/app/build.gradle.kts
+@@ -6,7 +6,7 @@
+     namespace = "com.wallker.wallet"
+     compileSdk = 36
+     buildToolsVersion = "36.0.0"
+-    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 13; versionName = "0.3.10" }
++    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 14; versionName = "0.3.11" }
+     signingConfigs {
+         if (hasReleaseSigning) create("wallkerRelease") {
+             storeFile = file(signingValues.getValue("WALLKER_KEYSTORE_PATH")!!)
+@@ -24,6 +24,7 @@
+     }
+     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+     kotlinOptions { jvmTarget = "17" }
++    testOptions { unitTests.isIncludeAndroidResources = true }
+ }
+ // Debug builds need no secrets. Never distribute an unsigned release by mistake.
+ gradle.taskGraph.whenReady {
+@@ -33,6 +34,9 @@
+     }
+ }
+ dependencies {
++    testImplementation("junit:junit:4.13.2")
++    testImplementation("org.robolectric:robolectric:4.14.1")
++    testImplementation("androidx.work:work-testing:2.10.1")
+     implementation("androidx.activity:activity-ktx:1.10.1")
+     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
+     implementation("androidx.work:work-runtime-ktx:2.10.1")
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
+@@ -39,6 +39,8 @@
+     private lateinit var badge:TextView
+     private lateinit var connection:TextView
+     private lateinit var pairStatus:TextView
++    private lateinit var history:TextView
++    private var historyKey=""
+     private lateinit var ring:StepRing
+     private val bg=Color.parseColor("#111512")
+     private val surface=Color.parseColor("#1a201b")
+@@ -95,6 +97,7 @@
+             .setPositiveButton(wl("Понятно"),null).show()
+     }
+     private fun buildInterface(){
++        historyKey=""
+         val root=stack().apply{setBackgroundColor(bg)}
+         root.setOnApplyWindowInsetsListener{v,insets->
+             if(Build.VERSION.SDK_INT>=30){
+@@ -117,26 +120,9 @@
+         val languages=LinearLayout(this)
+         for(language in listOf("ru","en"))languages.addView(action(language.uppercase(),walkerLanguage(this)==language){if(!busy){val saved=code.text.toString();getSharedPreferences("walker-ui",MODE_PRIVATE).edit().putString("language",language).apply();buildInterface();code.setText(saved);refresh()}},LinearLayout.LayoutParams(0,-2,1f))
+         settings.put(label("Language",16f,Color.WHITE,true));settings.put(languages,12)
+-        phone.put(label("ШАГОМЕР",11f,lime,true))
+-        phone.put(label("Шаги — здесь. Кошелёк — в Telegram.",17f,Color.WHITE,true),8)
+-        phone.put(label("Приложение считает и передаёт шаги. Баланс, награды, задания и таппер доступны в Telegram."),8)
+-        phone.put(action("Открыть кошелёк в Telegram"){openTelegram()},12)
+-        phone.put(label("ТВОЙ АККАУНТ",11f,muted,true))
+-        phone.put(label("Подключение Telegram",28f,Color.WHITE,true),8)
+-        phone.put(label("Свяжи телефон с кошельком, чтобы передавать шаги."),8)
+-        val pairing=card();phone.put(pairing,24)
+-        connection=label("",16f,lime,true);pairing.put(connection)
+-        pairing.put(label("1. Открой Wallet → «Подключение» в Telegram.\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда."),16)
+-        pairing.put(action("Получить код в Telegram"){openTelegram()},16)
+-        code=EditText(this).apply{
+-            hint=wl("Вставь код привязки");textSize=14f;setTextColor(Color.WHITE);setHintTextColor(muted)
+-            background=shape(bg,12,true);setPadding(dp(14),dp(14),dp(14),dp(14));minHeight=dp(56)
+-            inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+-            isSingleLine=true;importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+-        };pairing.put(code,16)
+-        pair=action("Привязать Telegram",true){pairDevice()};pairing.put(pair,12)
+-        pairStatus=label("",13f);pairing.put(pairStatus,14)
+-        pairing.put(label("При повторной привязке к тому же аккаунту местные шаги сохраняются. Telegram может быть на другом телефоне.",12f),16)
++        phone.put(label("ШАГОМЕР БЕЗ РЕГИСТРАЦИИ",11f,lime,true))
++        phone.put(label("Твои шаги — каждый день",26f,Color.WHITE,true),8)
++        phone.put(label("Начни с кнопки ниже. Подсчёт и история работают без аккаунта, Telegram и интернета."),8)
+         val activity=card();phone.put(activity,20)
+         val title=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
+         title.addView(label("Шаги сегодня",17f,Color.WHITE,true),LinearLayout.LayoutParams(0,-2,1f))
+@@ -153,11 +139,36 @@
+             if(store.enabled()){store.setEnabled(false);stopService(Intent(this,StepService::class.java));store.setStatus("Шагомер приостановлен");refresh()}else requestCounter()
+         };activity.put(tracking)
+         activity.put(label("Носи телефон с собой. Шаги сохраняются даже без интернета.",12f),14)
+-        val transfer=card();phone.put(transfer,16)
++        val journal=card();phone.put(journal,16)
++        journal.put(label("История шагов",17f,Color.WHITE,true))
++        history=label("",14f);journal.put(history,12)
++        val localState=card();phone.put(localState,16)
++        localState.put(label("Шагомер на телефоне",17f,Color.WHITE,true))
++        status=label("",13f);localState.put(status,10)
++        val pairing=card()
++        val optional=card();phone.put(optional,20)
++        optional.put(label("Передача в Walker Wallet",17f,Color.WHITE,true))
++        optional.put(label("Необязательно. Подключи игровой кошелёк, если хочешь передавать шаги. Сам шагомер не требует входа."),10)
++        optional.put(action("Настроить передачу шагов"){
++            pairing.visibility=if(pairing.visibility==View.VISIBLE)View.GONE else View.VISIBLE
++        },12)
++        phone.put(pairing,12);pairing.visibility=View.GONE
++        connection=label("",16f,lime,true);pairing.put(connection)
++        pairing.put(label("1. Открой Wallet → «Подключение» в Telegram.\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда."),16)
++        pairing.put(action("Получить код в Telegram"){openTelegram()},16)
++        code=EditText(this).apply{
++            hint=wl("Вставь код привязки");textSize=14f;setTextColor(Color.WHITE);setHintTextColor(muted)
++            background=shape(bg,12,true);setPadding(dp(14),dp(14),dp(14),dp(14));minHeight=dp(56)
++            inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
++            isSingleLine=true;importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
++        };pairing.put(code,16)
++        pair=action("Привязать Telegram",true){pairDevice()};pairing.put(pair,12)
++        pairStatus=label("",13f);pairing.put(pairStatus,14)
++        pairing.put(label("При повторной привязке к тому же аккаунту местные шаги сохраняются. Telegram может быть на другом телефоне.",12f),16)
++        val transfer=card();pairing.put(transfer,16)
+         transfer.put(label("Синхронизация",17f,Color.WHITE,true))
+         pending=label("");transfer.put(pending,10)
+         sync=action("Передать сохранённые шаги",true){StepSyncWorker.now(this);store.setSyncStatus("Передадим шаги при доступной связи");refresh()};transfer.put(sync,16)
+-        status=label("",13f);transfer.put(status,14)
+         settings.put(label("ПРИЛОЖЕНИЕ",11f,muted,true))
+         settings.put(label("Настройки",28f,Color.WHITE,true),8)
+         val options=card();settings.put(options,24)
+@@ -192,11 +203,19 @@
+         badge.text=wl(if(store.enabled())"● ВКЛЮЧЁН" else "НА ПАУЗЕ")
+         badge.setTextColor(if(store.enabled())lime else muted)
+         val connected=vault.token()!=null
+-        connection.text=wl(if(connected)"Telegram подключён" else "Telegram не подключён")
++        connection.text=wl(if(connected)"Telegram подключён" else "Передача не подключена")
+         pairStatus.text=wl(listOf(store.status(),store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n"))
+         val days=store.pending().days.size
+-        pending.text=wl(if(!connected)"Подключи Telegram с помощью кода выше" else if(days==0)"Все сохранённые шаги переданы" else "Дней ожидают передачи: $days")
+-        status.text=wl(listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"},store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n"))
++        pending.text=wl(if(!connected)"Передача выключена. Шаги сохраняются на телефоне." else if(days==0)"Все сохранённые шаги переданы" else "Дней ожидают передачи: $days")
++        status.text=wl(listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"}).filter{it.isNotEmpty()}.joinToString("\n"))
++        val rows=store.history()
++        val key=walkerLanguage(this)+rows.toString()
++        if(key!=historyKey){
++            historyKey=key
++            val locale=java.util.Locale(if(walkerLanguage(this)=="en")"en" else "ru")
++            val formatter=java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.MEDIUM).withLocale(locale)
++            history.text=if(rows.isEmpty())wl("Здесь появятся твои шаги. Включи шагомер и пройди немного.") else rows.joinToString("\n"){(day,count)->"${java.time.LocalDate.parse(day).format(formatter)}  ·  ${String.format(locale,"%,d",count)} ${wl("шагов")}"}
++        }
+         tracking.text=wl(if(store.enabled())"Приостановить шагомер" else "Включить шагомер")
+         tracking.isEnabled=!busy;pair.isEnabled=!busy;code.isEnabled=!busy;sync.isEnabled=!busy && vault.token()!=null
+         pair.text=wl(if(busy)"Подключаем…" else if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram")
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
+@@ -88,6 +88,10 @@
+             d.put(field,values)
+         }
+     }
++    fun history():List<Pair<String,Long>> = synchronized(lock){
++        val totals=load().optJSONObject("totals") ?: JSONObject()
++        totals.keys().asSequence().filter{runCatching{LocalDate.parse(it)}.isSuccess}.sortedDescending().take(7).map{it to totals.getLong(it)}.toList()
++    }
+     fun today():Long=synchronized(lock){load().optJSONObject("totals")?.optLong(date(DeviceVault(context).currentMillis()),0) ?: 0}
+     data class Pending(val generation:String,val days:List<Pair<String,Long>>)
+     fun pending():Pending=synchronized(lock){
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
+@@ -41,7 +41,7 @@
+         return try{
+             try{val state=WallkerAPI.post("/api/device/state",JSONObject(),token);vault.saveClock(state.optLong("serverNow",0));vault.saveBotLink(state.optString("botLink",""))}catch(_:Exception){}
+             if(store.diagnostic().isNotEmpty())try{
+-                WallkerAPI.post("/api/device/errors",JSONObject().put("code",store.diagnostic()).put("version","0.3.10"),token)
++                WallkerAPI.post("/api/device/errors",JSONObject().put("code",store.diagnostic()).put("version","0.3.11"),token)
+                 store.setDiagnostic("")
+             }catch(_:Exception){}
+             val pending=store.pending()
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/WalkerLanguage.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/WalkerLanguage.kt
+@@ -5,6 +5,19 @@
+ 
+ fun walkerLanguage(context:Context):String=context.getSharedPreferences("walker-ui",Context.MODE_PRIVATE).getString("language",null) ?: if(Locale.getDefault().language=="ru") "ru" else "en"
+ private val walkerEnglish=mapOf(
++ "ШАГОМЕР БЕЗ РЕГИСТРАЦИИ" to "STEP TRACKER WITHOUT SIGN UP",
++ "Твои шаги — каждый день" to "Your steps, every day",
++ "Начни с кнопки ниже. Подсчёт и история работают без аккаунта, Telegram и интернета." to "Start with the button below. Counting and history work without an account, Telegram or internet.",
++ "История шагов" to "Step history",
++ "Шагомер на телефоне" to "On-device step tracking",
++ "Передача в Walker Wallet" to "Share steps with Walker Wallet",
++ "Необязательно. Подключи игровой кошелёк, если хочешь передавать шаги. Сам шагомер не требует входа." to "Optional. Connect your game wallet to send steps. The step tracker does not require sign in.",
++ "Настроить передачу шагов" to "Set up step sharing",
++ "Передача выключена. Шаги сохраняются на телефоне." to "Sharing is off. Steps are saved on your phone.",
++ "Передача не подключена" to "Sharing is not connected",
++ "Здесь появятся твои шаги. Включи шагомер и пройди немного." to "Your steps will appear here. Enable step tracking and walk a little.",
++ "шагов" to "steps",
++
+  "Не удалось сохранить привязку" to "Could not save pairing",
+  "Разреши доступ к физической активности" to "Allow motion access",
+  "В этом телефоне нет датчика шагов" to "This phone has no step sensor",
+--- /dev/null
++++ b/mobile/android/app/src/test/java/com/wallker/wallet/StandaloneTrackerTest.kt
+@@ -0,0 +1,79 @@
++package com.wallker.wallet
++
++import android.app.Application
++import android.content.Context
++import android.os.SystemClock
++import android.view.View
++import android.view.ViewGroup
++import android.widget.Button
++import android.widget.EditText
++import android.widget.TextView
++import androidx.work.Configuration
++import androidx.work.testing.SynchronousExecutor
++import androidx.work.testing.WorkManagerTestInitHelper
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.Robolectric
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.annotation.Config
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [28], application = Application::class)
++class StandaloneTrackerTest {
++    private lateinit var context:Context
++    @Before fun prepare(){
++        context=RuntimeEnvironment.getApplication()
++        for(name in listOf("wallker_steps","wallker","walker-ui","walker_pending_pair"))
++            context.getSharedPreferences(name,Context.MODE_PRIVATE).edit().clear().commit()
++        context.getSharedPreferences("walker-ui",Context.MODE_PRIVATE).edit().putString("language","ru").commit()
++        WorkManagerTestInitHelper.initializeTestWorkManager(context,
++            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
++    }
++    private fun all(view:View):List<View> = listOf(view)+(if(view is ViewGroup)(0 until view.childCount).flatMap{all(view.getChildAt(it))} else emptyList())
++    private fun visible(view:View):Boolean = view.visibility==View.VISIBLE && (view.parent !is View || visible(view.parent as View))
++    @Test fun freshInstallHasUsableCounterAndNoPairingGate(){
++        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
++        val views=all(controller.get().window.decorView)
++        assertNull(DeviceVault(context).token())
++        assertTrue(views.filterIsInstance<Button>().any{it.text.toString()=="Включить шагомер" && it.isEnabled && visible(it)})
++        assertTrue(views.filterIsInstance<TextView>().any{it.text.toString()=="ШАГОМЕР БЕЗ РЕГИСТРАЦИИ" && visible(it)})
++        assertTrue(views.filterIsInstance<TextView>().any{it.text.toString()=="История шагов" && visible(it)})
++        assertFalse(views.filterIsInstance<EditText>().any{visible(it)})
++        controller.pause().stop().destroy()
++    }
++    @Test fun sensorLedgerPersistsWithoutAccountOrSync(){
++        val store=StepStore(context)
++        store.setEnabled(true)
++        val stamp=SystemClock.elapsedRealtimeNanos()
++        store.record(100,stamp)
++        store.record(113,stamp)
++        assertNull(DeviceVault(context).token())
++        assertEquals(13L,store.today())
++        assertEquals(13L,StepStore(context).history().first().second)
++        assertEquals(13L,StepStore(context).today())
++    }
++    @Test fun optionalSharingOpensOnlyWhenRequested(){
++        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
++        val views=all(controller.get().window.decorView)
++        val input=views.filterIsInstance<EditText>().single()
++        assertFalse(visible(input))
++        views.filterIsInstance<Button>().single{it.text.toString()=="Настроить передачу шагов"}.performClick()
++        assertTrue(visible(input))
++        views.filterIsInstance<Button>().single{it.text.toString()=="Настроить передачу шагов"}.performClick()
++        assertFalse(visible(input))
++        assertNull(DeviceVault(context).token())
++        controller.pause().stop().destroy()
++    }
++    @Test fun englishStandaloneScreenIsAvailableWithoutAccount(){
++        context.getSharedPreferences("walker-ui",Context.MODE_PRIVATE).edit().putString("language","en").commit()
++        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
++        val views=all(controller.get().window.decorView)
++        assertTrue(views.filterIsInstance<TextView>().any{it.text.toString()=="STEP TRACKER WITHOUT SIGN UP" && visible(it)})
++        assertTrue(views.filterIsInstance<TextView>().any{it.text.toString()=="Step history" && visible(it)})
++        assertNull(DeviceVault(context).token())
++        controller.pause().stop().destroy()
++    }
++}
