@@ -1,0 +1,514 @@
+--- a/mobile/android/app/build.gradle.kts
++++ b/mobile/android/app/build.gradle.kts
+@@ -6,7 +6,7 @@
+     namespace = "com.wallker.wallet"
+     compileSdk = 36
+     buildToolsVersion = "36.0.0"
+-    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 12; versionName = "0.3.9" }
++    defaultConfig { applicationId = "com.wallker.wallet"; minSdk = 28; targetSdk = 36; versionCode = 13; versionName = "0.3.10" }
+     signingConfigs {
+         if (hasReleaseSigning) create("wallkerRelease") {
+             storeFile = file(signingValues.getValue("WALLKER_KEYSTORE_PATH")!!)
+--- a/mobile/android/app/src/main/AndroidManifest.xml
++++ b/mobile/android/app/src/main/AndroidManifest.xml
+@@ -1,5 +1,6 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+- <uses-permission android:name="android.permission.INTERNET"/>
++ <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
++    <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH"/>
+@@ -10,5 +11,6 @@
+    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+   </activity>
+   <service android:name=".StepService" android:exported="false" android:foregroundServiceType="health"/>
+- </application>
++ <receiver android:name=".BootReceiver" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>
++    </application>
+ </manifest>
+--- /dev/null
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/BootReceiver.kt
+@@ -0,0 +1,11 @@
++package com.wallker.wallet
++import android.content.*
++import android.os.Build
++import android.Manifest
++import android.content.pm.PackageManager
++class BootReceiver:BroadcastReceiver(){override fun onReceive(context:Context,intent:Intent){
++ if(intent.action!=Intent.ACTION_BOOT_COMPLETED)return
++ val store=StepStore(context);StepSyncWorker.schedule(context)
++ val allowed=Build.VERSION.SDK_INT<29 || context.checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION)==PackageManager.PERMISSION_GRANTED
++ if(store.enabled()&&allowed)try{context.startForegroundService(Intent(context,StepService::class.java))}catch(_:Exception){store.setStatus("После перезагрузки открой Walker, чтобы возобновить шагомер.")}
++}}
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/DeviceVault.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/DeviceVault.kt
+@@ -11,7 +11,7 @@
+ import javax.crypto.SecretKey
+ import javax.crypto.spec.GCMParameterSpec
+ 
+-class DeviceVault(context:Context) {
++class DeviceVault(private val context:Context) {
+     private val prefs=context.getSharedPreferences("wallker",Context.MODE_PRIVATE)
+     private fun key():SecretKey {
+         val store=KeyStore.getInstance("AndroidKeyStore").apply{load(null)}
+@@ -26,7 +26,11 @@
+         val encrypted=prefs.getString("token",null)
+         if(encrypted==null)null else{val c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,Base64.decode(prefs.getString("iv",null),Base64.NO_WRAP)));String(c.doFinal(Base64.decode(encrypted,Base64.NO_WRAP)))}
+     }catch(_:Exception){null}
+-    fun timezone():ZoneId=ZoneId.of(prefs.getString("timezone","Europe/Moscow"))
++    fun timezone():ZoneId=try{ZoneId.of(prefs.getString("timezone","Europe/Moscow"))}catch(_:Exception){ZoneId.of("Europe/Moscow")}
++    fun botLink():String=prefs.getString("botLink","https://t.me/wallker_wallet_bot") ?: "https://t.me/wallker_wallet_bot"
++    fun saveBotLink(value:String){if(value.matches(Regex("https://t\\.me/[a-zA-Z][a-zA-Z0-9_]{4,31}")))prefs.edit().putString("botLink",value).apply()}
++    fun saveClock(serverNow:Long){if(serverNow>0)prefs.edit().putLong("serverClock",serverNow).putLong("clockMono",android.os.SystemClock.elapsedRealtime()).putInt("clockBoot",android.provider.Settings.Global.getInt(context.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1)).apply()}
++    fun currentMillis():Long {val mono=android.os.SystemClock.elapsedRealtime();val anchor=prefs.getLong("clockMono",-1);val boot=android.provider.Settings.Global.getInt(context.contentResolver,android.provider.Settings.Global.BOOT_COUNT,-1);return if(anchor>=0 && mono>=anchor && boot==prefs.getInt("clockBoot",-2))prefs.getLong("serverClock",System.currentTimeMillis())+mono-anchor else System.currentTimeMillis()}
+     fun accountId():String?=prefs.getString("accountId",null)
+     fun clear(){prefs.edit().clear().apply()}
+ }
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/MainActivity.kt
+@@ -48,7 +48,7 @@
+     private val handler=Handler(Looper.getMainLooper())
+     private val ticker=object:Runnable{override fun run(){refresh();handler.postDelayed(this,1000)}}
+     private val permissionRequest=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+-        if(motionAllowed())startCounter() else {store.setStatus("Разреши физическую активность в настройках телефона.");refresh()}
++        if(motionAllowed())startCounter() else {store.setDiagnostic("motion_permission");store.setStatus("Разреши физическую активность в настройках телефона.");refresh()}
+     }
+     private fun motionAllowed()=Build.VERSION.SDK_INT<29 || checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION)==PackageManager.PERMISSION_GRANTED
+     override fun onCreate(savedInstanceState:Bundle?){
+@@ -56,13 +56,14 @@
+         buildInterface()
+         StepSyncWorker.schedule(this);refresh()
+     }
++    private fun wl(value:String)=walkerText(this,value)
+     private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+     private fun shape(fill:Int, radius:Int=20, border:Boolean=false)=GradientDrawable().apply{
+         setColor(fill);cornerRadius=dp(radius).toFloat()
+         if(border)setStroke(dp(1),Color.parseColor("#303930"))
+     }
+     private fun label(value:String,size:Float=14f,color:Int=muted,bold:Boolean=false)=TextView(this).apply{
+-        text=value;textSize=size;setTextColor(color)
++        text=wl(value);textSize=size;setTextColor(color)
+         if(bold)typeface=Typeface.create("sans-serif",Typeface.BOLD)
+     }
+     private fun stack()=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+@@ -71,7 +72,7 @@
+     }
+     private fun card()=stack().apply{background=shape(surface,border=true);setPadding(dp(20),dp(20),dp(20),dp(20))}
+     private fun action(title:String,primary:Boolean=false,click:()->Unit)=Button(this).apply{
+-        text=title;isAllCaps=false;textSize=14f;typeface=Typeface.create("sans-serif",Typeface.BOLD)
++        text=wl(title);isAllCaps=false;textSize=14f;typeface=Typeface.create("sans-serif",Typeface.BOLD)
+         setTextColor(if(primary)bg else Color.parseColor("#f4f7f1"))
+         background=shape(if(primary)lime else Color.parseColor("#303a30"),12)
+         backgroundTintList=ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled),intArrayOf()),intArrayOf(Color.parseColor("#303930"),if(primary)lime else Color.parseColor("#303a30")))
+@@ -79,19 +80,19 @@
+         setOnClickListener{click()}
+     }
+     private fun openTelegram(){
+-        try{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://t.me/wallker_wallet_bot")))}
+-        catch(_:android.content.ActivityNotFoundException){Toast.makeText(this,"Установи Telegram или браузер",Toast.LENGTH_LONG).show()}
++        try{startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(vault.botLink())))}
++        catch(_:android.content.ActivityNotFoundException){Toast.makeText(this,wl("Установи Telegram или браузер"),Toast.LENGTH_LONG).show()}
+     }
+     private fun showBackgroundHelp(){
+-        AlertDialog.Builder(this).setTitle("Работа с выключенным экраном")
+-            .setMessage("Разреши физическую активность и уведомления. В настройках батареи выбери «Без ограничений». На Xiaomi / POCO включи фоновый автозапуск Walker. После перезагрузки телефона открой приложение и проверь, что шагомер включён.")
+-            .setPositiveButton("Открыть настройки"){_,_->startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))}
+-            .setNegativeButton("Закрыть",null).show()
++        AlertDialog.Builder(this).setTitle(wl("Работа с выключенным экраном"))
++            .setMessage(wl("Разреши физическую активность и уведомления. В настройках батареи выбери «Без ограничений». На Xiaomi / POCO включи фоновый автозапуск Walker. После перезагрузки телефона открой приложение и проверь, что шагомер включён."))
++            .setPositiveButton(wl("Открыть настройки")){_,_->startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+packageName)))}
++            .setNegativeButton(wl("Закрыть"),null).show()
+     }
+     private fun showPrivacy(){
+-        AlertDialog.Builder(this).setTitle("Данные Walker")
+-            .setMessage("Шаги считаются датчиком телефона без GPS. На телефоне хранятся даты и суммы за последние семь дней. После привязки они передаются по HTTPS на сервер Walker при доступной связи. Telegram передаёт ID и имя; сервер хранит часовой пояс, историю и привязку. Токен на телефоне защищён Android Keystore.\n\nОчистка удаляет местные шаги и токен. Для отзыва доступа также отключи устройство в разделе «Телефон» в Telegram. Серверная история сохраняется.\n\nКамера, геолокация, контакты, Apple Health и Health Connect не используются. WC — игровые монеты бета-версии без вывода; рекламы и платежей нет.")
+-            .setPositiveButton("Понятно",null).show()
++        AlertDialog.Builder(this).setTitle(wl("Данные Walker"))
++            .setMessage(wl("Шаги считаются датчиком телефона без GPS. На телефоне хранятся история шагов и неотправленные данные. После привязки даты и суммы шагов передаются по HTTPS на сервер Walker. Пароли, маршруты и данные карт не передаются. Очистка удаляет местные шаги и токен; серверная история остаётся в Telegram. Для отзыва доступа также отключи устройство в разделе «Подключение»."))
++            .setPositiveButton(wl("Понятно"),null).show()
+     }
+     private fun buildInterface(){
+         val root=stack().apply{setBackgroundColor(bg)}
+@@ -113,6 +114,9 @@
+         host.addView(scroll,FrameLayout.LayoutParams(-1,-1))
+         val body=stack().apply{setPadding(dp(20),dp(8),dp(20),dp(24))};scroll.addView(body)
+         val phone=stack();val settings=stack();body.put(phone);body.put(settings)
++        val languages=LinearLayout(this)
++        for(language in listOf("ru","en"))languages.addView(action(language.uppercase(),walkerLanguage(this)==language){if(!busy){val saved=code.text.toString();getSharedPreferences("walker-ui",MODE_PRIVATE).edit().putString("language",language).apply();buildInterface();code.setText(saved);refresh()}},LinearLayout.LayoutParams(0,-2,1f))
++        settings.put(label("Language",16f,Color.WHITE,true));settings.put(languages,12)
+         phone.put(label("ШАГОМЕР",11f,lime,true))
+         phone.put(label("Шаги — здесь. Кошелёк — в Telegram.",17f,Color.WHITE,true),8)
+         phone.put(label("Приложение считает и передаёт шаги. Баланс, награды, задания и таппер доступны в Telegram."),8)
+@@ -122,10 +126,10 @@
+         phone.put(label("Свяжи телефон с кошельком, чтобы передавать шаги."),8)
+         val pairing=card();phone.put(pairing,24)
+         connection=label("",16f,lime,true);pairing.put(connection)
+-        pairing.put(label("1. Открой бота и раздел «Телефон».\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда."),16)
++        pairing.put(label("1. Открой Wallet → «Подключение» в Telegram.\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда."),16)
+         pairing.put(action("Получить код в Telegram"){openTelegram()},16)
+         code=EditText(this).apply{
+-            hint="Вставь код привязки";textSize=14f;setTextColor(Color.WHITE);setHintTextColor(muted)
++            hint=wl("Вставь код привязки");textSize=14f;setTextColor(Color.WHITE);setHintTextColor(muted)
+             background=shape(bg,12,true);setPadding(dp(14),dp(14),dp(14),dp(14));minHeight=dp(56)
+             inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+             isSingleLine=true;importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+@@ -165,10 +169,10 @@
+         clear.put(label("Управление устройством",17f,Color.WHITE,true))
+         clear.put(label("Очистка удалит привязку и ещё не переданные шаги с этого телефона."),10)
+         clear.put(action("Отключить и очистить"){
+-            if(!busy)AlertDialog.Builder(this).setTitle("Очистить данные телефона?")
+-                .setMessage("Местные шаги и привязка будут удалены. Уже переданная история останется в Telegram.")
+-                .setPositiveButton("Очистить"){_,_->stopService(Intent(this,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}
+-                .setNegativeButton("Отмена",null).show()
++            if(!busy)AlertDialog.Builder(this).setTitle(wl("Очистить данные телефона?"))
++                .setMessage(wl("Местные шаги и привязка будут удалены. Уже переданная история останется в Telegram."))
++                .setPositiveButton(wl("Очистить")){_,_->stopService(Intent(this,StepService::class.java));vault.clear();store.clear();store.setStatus("Для отзыва доступа отключи телефон также в Telegram");refresh()}
++                .setNegativeButton(wl("Отмена"),null).show()
+         },16)
+         settings.put(label("Walker Wallet • "+packageManager.getPackageInfo(packageName,0).versionName+"\nШагомер и передача шагов в Telegram.",12f).apply{gravity=Gravity.CENTER},24)
+         val nav=LinearLayout(this).apply{setPadding(dp(12),dp(10),dp(12),dp(10));background=shape(surface,0)}
+@@ -183,19 +187,19 @@
+     override fun onStart(){super.onStart();handler.post(ticker);if(store.enabled() && motionAllowed())startCounter();StepSyncWorker.now(this)}
+     override fun onStop(){handler.removeCallbacks(ticker);super.onStop()}
+     private fun refresh(){
+-        val today=store.today();counter.text="%,d".format(today)
++        val today=store.today();counter.text=String.format(java.util.Locale(if(walkerLanguage(this)=="en")"en" else "ru"),"%,d",today)
+         ring.active=store.enabled()
+-        badge.text=if(store.enabled())"● ВКЛЮЧЁН" else "НА ПАУЗЕ"
++        badge.text=wl(if(store.enabled())"● ВКЛЮЧЁН" else "НА ПАУЗЕ")
+         badge.setTextColor(if(store.enabled())lime else muted)
+         val connected=vault.token()!=null
+-        connection.text=if(connected)"Telegram подключён" else "Telegram не подключён"
+-        pairStatus.text=listOf(store.status(),store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n")
++        connection.text=wl(if(connected)"Telegram подключён" else "Telegram не подключён")
++        pairStatus.text=wl(listOf(store.status(),store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n"))
+         val days=store.pending().days.size
+-        pending.text=if(!connected)"Подключи Telegram с помощью кода выше" else if(days==0)"Все сохранённые шаги переданы" else "Дней ожидают передачи: $days"
+-        status.text=listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"},store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n")
+-        tracking.text=if(store.enabled())"Приостановить шагомер" else "Включить шагомер"
++        pending.text=wl(if(!connected)"Подключи Telegram с помощью кода выше" else if(days==0)"Все сохранённые шаги переданы" else "Дней ожидают передачи: $days")
++        status.text=wl(listOf(if(store.enabled())"Шагомер включён" else "Шагомер выключен",store.status().ifEmpty{"Включи шагомер и разреши физическую активность"},store.syncStatus()).filter{it.isNotEmpty()}.joinToString("\n"))
++        tracking.text=wl(if(store.enabled())"Приостановить шагомер" else "Включить шагомер")
+         tracking.isEnabled=!busy;pair.isEnabled=!busy;code.isEnabled=!busy;sync.isEnabled=!busy && vault.token()!=null
+-        pair.text=if(busy)"Подключаем…" else if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram"
++        pair.text=wl(if(busy)"Подключаем…" else if(vault.token()==null)"Привязать Telegram" else "Обновить привязку Telegram")
+     }
+     private fun requestCounter(){
+         val sensors=getSystemService(SENSOR_SERVICE) as SensorManager
+@@ -213,8 +217,8 @@
+     private suspend fun confirmAccountChange(unknown:Boolean):Boolean=suspendCancellableCoroutine{continuation->
+         val dialog=AlertDialog.Builder(this).setTitle(if(unknown)"Проверить смену аккаунта" else "Другой аккаунт Telegram")
+             .setMessage((if(unknown)"Не удалось подтвердить, что это прежний аккаунт. " else "Этот код выдан другому Telegram-аккаунту. ")+"При продолжении местные шаги прежнего аккаунта будут очищены. Уже переданная история останется в его Telegram-кошельке. Продолжить?")
+-            .setPositiveButton("Сменить аккаунт"){_,_->if(continuation.isActive)continuation.resume(true)}
+-            .setNegativeButton("Отмена"){_,_->if(continuation.isActive)continuation.resume(false)}
++            .setPositiveButton(wl("Сменить аккаунт")){_,_->if(continuation.isActive)continuation.resume(true)}
++            .setNegativeButton(wl("Отмена")){_,_->if(continuation.isActive)continuation.resume(false)}
+             .setOnCancelListener{if(continuation.isActive)continuation.resume(false)}.create()
+         continuation.invokeOnCancellation{dialog.dismiss()};dialog.show()
+     }
+@@ -226,18 +230,23 @@
+             busy=true;refresh()
+             try{
+                 val previousToken=vault.token();val previousAccount=vault.accountId()
+-                val check=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("checkOnly",true),previousToken)
++                val pending=getSharedPreferences("walker_pending_pair",MODE_PRIVATE)
++                val pairNonce=if(pending.getString("code",null)==value)pending.getString("nonce",null) else null
++                val nonce=pairNonce ?: ByteArray(24).also{java.security.SecureRandom().nextBytes(it)}.joinToString(""){"%02x".format(it.toInt() and 255)}
++                check(pending.edit().putString("code",value).putString("nonce",nonce).commit()){"Не удалось сохранить привязку"}
++                val check=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("pairNonce",nonce).put("checkOnly",true),previousToken)
+                 val accountId=check.getString("accountId")
+                 val first=previousToken==null && previousAccount==null
+                 val same=if(previousAccount!=null)previousAccount==accountId else check.optBoolean("sameAccount",false)
+                 val unknown=previousAccount==null && check.isNull("sameAccount")
+                 if(!first && !same && !confirmAccountChange(unknown))return@launch
+-                val result=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("expectedAccountId",accountId),previousToken)
++                val result=WallkerAPI.post("/api/device/pair",JSONObject().put("code",value).put("platform","android").put("pairNonce",nonce).put("expectedAccountId",accountId),previousToken)
+                 require(result.getString("accountId")==accountId){"Аккаунт изменился. Повтори привязку."}
+                 val reset=!first && !same
+                 if(reset){store.setEnabled(false);stopService(Intent(this@MainActivity,StepService::class.java))}
+                 vault.save(result.getString("token"),result.getString("timezone"),accountId)
+-                store.mergeHistory(result.getJSONArray("history"),reset);code.setText("")
++                vault.saveBotLink(result.optString("botLink",""));vault.saveClock(result.optLong("serverNow",0))
++                store.mergeHistory(result.getJSONArray("history"),reset);pending.edit().clear().apply();code.setText("")
+                 store.setSyncStatus(if(reset)"Аккаунт сменён. История нового кошелька загружена." else "Привязка обновлена. Местные шаги сохранены.")
+                 StepSyncWorker.now(this@MainActivity)
+             }catch(e:Exception){store.setStatus(e.message ?: "Не удалось привязать телефон")}
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepService.kt
+@@ -25,11 +25,11 @@
+         val sensor=sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER,true) ?: sensors.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+         if(sensor==null){store.setEnabled(false);store.setStatus("В этом телефоне нет датчика шагов");stopSelf();return START_NOT_STICKY}
+         val nm=getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+-        nm.createNotificationChannel(NotificationChannel("steps","Шагомер Walker",NotificationManager.IMPORTANCE_LOW))
++        nm.createNotificationChannel(NotificationChannel("steps",walkerText(this,"Шагомер Walker"),NotificationManager.IMPORTANCE_LOW))
+         val open=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+         val stop=PendingIntent.getService(this,1,Intent(this,StepService::class.java).setAction("STOP"),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+-        val notification=Notification.Builder(this,"steps").setSmallIcon(R.drawable.ic_wallker).setContentTitle("Walker считает шаги")
+-            .setContentText("Носи телефон с собой. Нажми, чтобы открыть.").setContentIntent(open).setOngoing(true)
++        val notification=Notification.Builder(this,"steps").setSmallIcon(R.drawable.ic_wallker).setContentTitle(walkerText(this,"Walker считает шаги"))
++            .setContentText(walkerText(this,"Носи телефон с собой. Нажми, чтобы открыть.")).setContentIntent(open).setOngoing(true)
+             .addAction(Notification.Action.Builder(Icon.createWithResource(this,android.R.drawable.ic_media_pause),"Приостановить",stop).build()).build()
+         try {
+             if(Build.VERSION.SDK_INT>=34)startForeground(1,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH) else startForeground(1,notification)
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepStore.kt
+@@ -17,6 +17,8 @@
+     private fun save(data:JSONObject){check(prefs.edit().putString("ledger",data.toString()).commit()){"Не удалось сохранить шаги"}}
+     private fun date(now:Long)=Instant.ofEpochMilli(now).atZone(DeviceVault(context).timezone()).toLocalDate().toString()
+     fun enabled():Boolean=synchronized(lock){load().optBoolean("enabled")}
++    fun diagnostic():String=synchronized(lock){load().optString("diagnostic","")}
++    fun setDiagnostic(code:String)=synchronized(lock){val d=load();d.put("diagnostic",code);save(d)}
+     fun status():String=synchronized(lock){load().optString("status","")}
+     fun syncStatus():String=synchronized(lock){load().optString("syncStatus","")}
+     fun setSyncStatus(message:String)=synchronized(lock){val d=load();d.put("syncStatus",message);save(d)}
+@@ -41,37 +43,59 @@
+     }
+     fun record(counter:Long,timestampNanos:Long)=synchronized(lock){
+         val d=load();if(!d.optBoolean("enabled"))return@synchronized
+-        val eventTime=System.currentTimeMillis()-(SystemClock.elapsedRealtimeNanos()-timestampNanos).coerceAtLeast(0)/1000000
++        val eventTime=DeviceVault(context).currentMillis()-(SystemClock.elapsedRealtimeNanos()-timestampNanos).coerceAtLeast(0)/1000000
+         val day=date(eventTime)
+         val boot=Settings.Global.getInt(context.contentResolver,Settings.Global.BOOT_COUNT,-1)
+         val previous=d.optLong("counter",-1)
+         val sameBoot=d.optInt("boot",-2)==boot && timestampNanos>=d.optLong("timestamp",0)
+         val delta=counter-previous
+         val totals=d.optJSONObject("totals") ?: JSONObject()
+-        // An aggregate crossing midnight has no per-step timestamps. Skip it rather than credit it to the wrong day.
+-        if(previous>=0 && sameBoot && d.optString("day")==day && delta in 0L..100000L) {
+-            totals.put(day,minOf(100000L,totals.optLong(day,0)+delta))
++        // Divide the counter delta over the elapsed interval. The exact per-step
++        // timestamps are unavailable, but no steps vanish at the day boundary.
++        if(previous>=0 && sameBoot && delta in 0L..100000L) {
++            val previousTime=d.optLong("eventTime",eventTime)
++            val duration=(eventTime-previousTime).coerceAtLeast(1)
++            val elapsed=(timestampNanos-d.optLong("timestamp",timestampNanos))/1000000
++            val clockChanged=kotlin.math.abs(duration-elapsed)>120000
++            if(clockChanged || duration>7*86400000L){
++                totals.put(day,minOf(100000L,totals.optLong(day,0)+delta))
++                d.put("diagnostic","clock_changed")
++                d.put("status","Время телефона изменилось. Данные сохранены; проверь дату и синхронизацию.")
++            }else {
++                var cursor=previousTime;var assigned=0L
++                while(cursor<eventTime){
++                    val zone=DeviceVault(context).timezone()
++                    val local=Instant.ofEpochMilli(cursor).atZone(zone)
++                    val end=minOf(eventTime,local.toLocalDate().plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
++                    val cumulative=if(end==eventTime)delta else (delta.toDouble()*(end-previousTime)/duration).toLong()
++                    val count=cumulative-assigned;val key=local.toLocalDate().toString()
++                    totals.put(key,minOf(100000L,totals.optLong(key,0)+count))
++                    assigned=cumulative;cursor=end
++                }
++                if(eventTime==previousTime)totals.put(day,minOf(100000L,totals.optLong(day,0)+delta))
++            }
+         }
++        d.put("eventTime",eventTime)
+         d.put("totals",totals).put("counter",counter).put("timestamp",timestampNanos).put("boot",boot).put("day",day)
+-        d.put("status","Шагомер работает")
++        if(!d.optString("status").contains("изменилось"))d.put("status","Шагомер работает")
+         prune(d);save(d)
+     }
+     private fun prune(d:JSONObject){
+-        val oldest=LocalDate.now(DeviceVault(context).timezone()).minusDays(6).toString()
++        val oldest=Instant.ofEpochMilli(DeviceVault(context).currentMillis()).atZone(DeviceVault(context).timezone()).toLocalDate().minusDays(6).toString()
+         for(field in listOf("totals","sent")) {
+             val values=d.optJSONObject(field) ?: JSONObject()
+-            values.keys().asSequence().toList().filter{it<oldest}.forEach{values.remove(it)}
++            values.keys().asSequence().toList().filter{it<oldest && (d.optJSONObject("sent")?.optLong(it,0) ?: 0)>= (d.optJSONObject("totals")?.optLong(it,0) ?: 0)}.forEach{values.remove(it)}
+             d.put(field,values)
+         }
+     }
+-    fun today():Long=synchronized(lock){load().optJSONObject("totals")?.optLong(date(System.currentTimeMillis()),0) ?: 0}
++    fun today():Long=synchronized(lock){load().optJSONObject("totals")?.optLong(date(DeviceVault(context).currentMillis()),0) ?: 0}
+     data class Pending(val generation:String,val days:List<Pair<String,Long>>)
+     fun pending():Pending=synchronized(lock){
+         val d=load();val before=d.toString();prune(d)
+         if(!d.has("generation"))d.put("generation",UUID.randomUUID().toString())
+         if(d.toString()!=before)save(d)
+         val totals=d.getJSONObject("totals");val sent=d.getJSONObject("sent")
+-        Pending(d.getString("generation"),totals.keys().asSequence().sorted().map{it to totals.getLong(it)}.filter{it.second>sent.optLong(it.first,0)}.toList())
++        Pending(d.getString("generation"),totals.keys().asSequence().sorted().map{it to totals.getLong(it)}.filter{it.second>sent.optLong(it.first,0) && it.first>=Instant.ofEpochMilli(DeviceVault(context).currentMillis()).atZone(DeviceVault(context).timezone()).toLocalDate().minusDays(6).toString() && it.first<=Instant.ofEpochMilli(DeviceVault(context).currentMillis()).atZone(DeviceVault(context).timezone()).toLocalDate().toString()}.toList())
+     }
+     fun acknowledge(generation:String,day:String,count:Long)=synchronized(lock){
+         val d=load();if(d.optString("generation")!=generation)return@synchronized
+--- a/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/StepSyncWorker.kt
+@@ -20,7 +20,7 @@
+             if(token!=null)connection.setRequestProperty("Authorization","Bearer $token")
+             connection.outputStream.use{it.write(data.toString().toByteArray(Charsets.UTF_8))}
+             val status=connection.responseCode
+-            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader(Charsets.UTF_8)?.use{it.readText().take(8192)} ?: ""
++            val raw=(if(status in 200..299)connection.inputStream else connection.errorStream)?.bufferedReader(Charsets.UTF_8)?.use{val buffer=CharArray(8193);var length=0;while(length<buffer.size){val n=it.read(buffer,length,buffer.size-length);if(n<0)break;length+=n};if(length>8192)throw ApiFailure(502,"Слишком большой ответ сервера");String(buffer,0,length)} ?: ""
+             val result=try{JSONObject(raw)}catch(_:Exception){val cloudflare1010=raw.lowercase().contains("error code: 1010")
+                 val detail=when {
+                     cloudflare1010 -> "Защита хостинга отклонила запрос: HTTP $status, Cloudflare 1010. Передай это сообщение разработчику."
+@@ -37,18 +37,26 @@
+ class StepSyncWorker(context:Context,parameters:WorkerParameters):CoroutineWorker(context,parameters){
+     override suspend fun doWork():Result {
+         val vault=DeviceVault(applicationContext);val token=vault.token() ?: return Result.success()
+-        val store=StepStore(applicationContext);val pending=store.pending()
++        val store=StepStore(applicationContext)
+         return try{
++            try{val state=WallkerAPI.post("/api/device/state",JSONObject(),token);vault.saveClock(state.optLong("serverNow",0));vault.saveBotLink(state.optString("botLink",""))}catch(_:Exception){}
++            if(store.diagnostic().isNotEmpty())try{
++                WallkerAPI.post("/api/device/errors",JSONObject().put("code",store.diagnostic()).put("version","0.3.10"),token)
++                store.setDiagnostic("")
++            }catch(_:Exception){}
++            val pending=store.pending()
+             for((day,count) in pending.days){
+                 if(vault.token()!=token)return Result.success()
+-                WallkerAPI.post("/api/device/steps",JSONObject().put("day",day).put("steps",count),token)
++                val result=WallkerAPI.post("/api/device/steps",JSONObject().put("day",day).put("steps",count),token)
++                store.setStatus("Шаги синхронизированы.")
+                 store.acknowledge(pending.generation,day,count)
+             }
+-            store.setSyncStatus("Шаги переданы. Обнови баланс в Telegram.");Result.success()
++            store.setSyncStatus("Шаги переданы. Статус начисления — в Telegram.");Result.success()
+         }catch(e:ApiFailure){
++            store.setDiagnostic("sync_failed")
+             store.setSyncStatus(if(e.status==401)"Привязка отозвана. Подключи Telegram заново." else "Шаги сохранены. Передача повторится позже.")
+             if(e.status in 400..499 && e.status!=429)Result.failure() else Result.retry()
+-        }catch(_:Exception){store.setSyncStatus("Нет связи. Шаги сохранены на телефоне.");Result.retry()}
++        }catch(_:Exception){store.setDiagnostic("network");store.setSyncStatus("Нет связи. Шаги сохранены на телефоне.");Result.retry()}
+     }
+     companion object {
+         private fun constraints()=Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+--- /dev/null
++++ b/mobile/android/app/src/main/java/com/wallker/wallet/WalkerLanguage.kt
+@@ -0,0 +1,136 @@
++package com.wallker.wallet
++
++import android.content.Context
++import java.util.Locale
++
++fun walkerLanguage(context:Context):String=context.getSharedPreferences("walker-ui",Context.MODE_PRIVATE).getString("language",null) ?: if(Locale.getDefault().language=="ru") "ru" else "en"
++private val walkerEnglish=mapOf(
++ "Не удалось сохранить привязку" to "Could not save pairing",
++ "Разреши доступ к физической активности" to "Allow motion access",
++ "В этом телефоне нет датчика шагов" to "This phone has no step sensor",
++ "Шагомер Walker" to "Walker step tracking",
++ "Walker считает шаги" to "Walker is counting steps",
++ "Носи телефон с собой. Нажми, чтобы открыть." to "Carry your phone. Tap to open.",
++ "Приостановить" to "Suspend",
++ "Не удалось включить датчик шагов" to "Could not enable the step sensor",
++ "Шагомер работает" to "Step tracking is running",
++ "Не удалось сохранить шаги" to "Could not save steps",
++ "Время телефона изменилось. Данные сохранены; проверь дату и синхронизацию." to "Phone time changed. Data saved; check the date and sync.",
++ "изменилось" to "changed",
++ "После перезагрузки открой Walker, чтобы возобновить шагомер." to "Open Walker after restarting to resume step tracking.",
++ "Разреши физическую активность в настройках телефона." to "Allow motion access in your phone settings.",
++ "Установи Telegram или браузер" to "Install Telegram or a browser",
++ "Работа с выключенным экраном" to "Tracking with the screen off",
++ "Разреши физическую активность и уведомления. В настройках батареи выбери «Без ограничений». На Xiaomi / POCO включи фоновый автозапуск Walker. После перезагрузки телефона открой приложение и проверь, что шагомер включён." to "Allow motion access and notifications. Choose unrestricted battery use. On Xiaomi / POCO enable Walker background autostart. After restarting, open Walker and check that step tracking is enabled.",
++ "Открыть настройки" to "Open settings",
++ "Закрыть" to "Close",
++ "Данные Walker" to "Walker data",
++ "Шаги считаются датчиком телефона без GPS. На телефоне хранятся история шагов и неотправленные данные. После привязки даты и суммы шагов передаются по HTTPS на сервер Walker. Пароли, маршруты и данные карт не передаются. Очистка удаляет местные шаги и токен; серверная история остаётся в Telegram. Для отзыва доступа также отключи устройство в разделе «Подключение»." to "Steps are counted by the phone sensor without GPS. Step history and unsent data are saved locally. After pairing, dates and step counts are sent over HTTPS to Walker. Passwords, routes and card details are not sent. Clearing deletes local steps and the access token; server history remains in Telegram. Also disconnect the device in Connection to revoke access.",
++ "Понятно" to "Got it",
++ "Ш А Г О М Е Р  /  A N D R O I D" to "S T E P S  /  A N D R O I D",
++ "БЕТА" to "BETA",
++ "ШАГОМЕР" to "STEP TRACKING",
++ "Шаги — здесь. Кошелёк — в Telegram." to "Steps here. Wallet in Telegram.",
++ "Приложение считает и передаёт шаги. Баланс, награды, задания и таппер доступны в Telegram." to "This app counts and sends steps. Balance, rewards, quests and tapping are available in Telegram.",
++ "Открыть кошелёк в Telegram" to "Open wallet in Telegram",
++ "ТВОЙ АККАУНТ" to "YOUR ACCOUNT",
++ "Подключение Telegram" to "Telegram connection",
++ "Свяжи телефон с кошельком, чтобы передавать шаги." to "Pair your phone with your wallet to sync steps.",
++ "1. Открой Wallet → «Подключение» в Telegram.\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда." to "1. Open Wallet → Connection in Telegram.\n2. Get a code for 10 minutes.\n3. Paste all 48 characters here.",
++ "Получить код в Telegram" to "Get a code in Telegram",
++ "Вставь код привязки" to "Paste your pairing code",
++ "Привязать Telegram" to "Pair Telegram",
++ "При повторной привязке к тому же аккаунту местные шаги сохраняются. Telegram может быть на другом телефоне." to "Pairing the same account again preserves local steps. Telegram can be on another phone.",
++ "Шаги сегодня" to "Steps today",
++ "СЕГОДНЯ" to "TODAY",
++ "шагов на телефоне" to "steps on your phone",
++ "Включить шагомер" to "Enable step tracking",
++ "Шагомер приостановлен" to "Step tracking paused",
++ "Носи телефон с собой. Шаги сохраняются даже без интернета." to "Carry your phone. Steps are saved offline too.",
++ "Синхронизация" to "Sync",
++ "Передать сохранённые шаги" to "Sync saved steps",
++ "Передадим шаги при доступной связи" to "Steps will sync when connected",
++ "ПРИЛОЖЕНИЕ" to "APP",
++ "Настройки" to "Settings",
++ "Считай шаги в фоне" to "Count steps in the background",
++ "Разреши уведомления, физическую активность и работу без ограничений батареи." to "Allow notifications, motion access and unrestricted battery use.",
++ "Настройки фоновой работы" to "Background settings",
++ "Какие данные передаются" to "What data is sent",
++ "Управление устройством" to "Device management",
++ "Очистка удалит привязку и ещё не переданные шаги с этого телефона." to "Clearing deletes pairing and unsent steps from this phone.",
++ "Отключить и очистить" to "Disconnect and clear",
++ "Очистить данные телефона?" to "Clear phone data?",
++ "Местные шаги и привязка будут удалены. Уже переданная история останется в Telegram." to "Local steps and pairing will be deleted. Synced history remains in Telegram.",
++ "Очистить" to "Clear",
++ "Для отзыва доступа отключи телефон также в Telegram" to "Also disconnect the phone in Telegram to revoke access",
++ "Отмена" to "Cancel",
++ "\nШагомер и передача шагов в Telegram." to "\nStep tracking and sync to Telegram.",
++ "Шагомер" to "Step tracking",
++ "● ВКЛЮЧЁН" to "● ENABLED",
++ "НА ПАУЗЕ" to "PAUSED",
++ "Telegram подключён" to "Telegram connected",
++ "Telegram не подключён" to "Telegram not connected",
++ "Подключи Telegram с помощью кода выше" to "Connect Telegram using the code above",
++ "Все сохранённые шаги переданы" to "All saved steps have been sent",
++ "Шагомер включён" to "Step tracking enabled",
++ "Шагомер выключен" to "Step tracking disabled",
++ "Включи шагомер и разреши физическую активность" to "Enable step tracking and allow motion access",
++ "Приостановить шагомер" to "Pause step tracking",
++ "Подключаем…" to "Connecting…",
++ "Обновить привязку Telegram" to "Update Telegram pairing",
++ "Проверить смену аккаунта" to "Check account change",
++ "Другой аккаунт Telegram" to "Different Telegram account",
++ "Не удалось подтвердить, что это прежний аккаунт. " to "Could not confirm this is the previous account. ",
++ "Этот код выдан другому Telegram-аккаунту. " to "This code belongs to another Telegram account. ",
++ "При продолжении местные шаги прежнего аккаунта будут очищены. Уже переданная история останется в его Telegram-кошельке. Продолжить?" to "Continuing clears the previous account's local steps. Synced history remains in its Telegram wallet. Continue?",
++ "Сменить аккаунт" to "Switch account",
++ "Вставь полный код из Telegram" to "Paste the full code from Telegram",
++ "Аккаунт изменился. Повтори привязку." to "Account changed. Pair the device again.",
++ "Аккаунт сменён. История нового кошелька загружена." to "Account changed. New wallet history loaded.",
++ "Привязка обновлена. Местные шаги сохранены." to "Pairing updated. Local steps preserved.",
++ "Не удалось привязать телефон" to "Could not pair your phone",
++ "Слишком большой ответ сервера" to "Server response too large",
++ "Доступ к серверу запрещён (HTTP 403, ответ не JSON). Передай это сообщение разработчику." to "Server access denied (HTTP 403, non-JSON response). Contact the developer.",
++ "Ошибка сервера" to "Server error",
++ "Шаги синхронизированы." to "Steps synced.",
++ "Шаги переданы. Статус начисления — в Telegram." to "Steps sent. Check rewards in Telegram.",
++ "Привязка отозвана. Подключи Telegram заново." to "Pairing revoked. Connect Telegram again.",
++ "Шаги сохранены. Передача повторится позже." to "Steps saved. Sync will retry later.",
++ "Нет связи. Шаги сохранены на телефоне." to "No connection. Steps saved on your phone.",
++ "Включи шагомер. Подключение к Apple Health не требуется." to "Enable step tracking. Apple Health is not required.",
++ "Сервер временно недоступен" to "Server temporarily unavailable",
++ "Вставь полный код из Telegram: 48 символов" to "Paste the full 48-character code from Telegram",
++ "Не удалось создать ключ привязки" to "Could not create pairing key",
++ "Не удалось проверить аккаунт" to "Could not verify account",
++ "Неверный ответ сервера" to "Invalid server response",
++ "Привязка обновлена. Шаги на телефоне сохранены." to "Pairing updated. Phone steps preserved.",
++ "Телефон привязан. Включи шагомер и передай шаги." to "Phone paired. Enable step tracking and sync your steps.",
++ "На этом устройстве нет доступного шагомера" to "Step tracking is unavailable on this device",
++ "Шагомер включён. Носи iPhone с собой." to "Step tracking enabled. Carry your iPhone.",
++ "Шаги сохраняются на телефоне. Привяжи Telegram для начисления монет." to "Steps are saved on your phone. Pair Telegram to earn rewards.",
++ "Шаги сохранены и переданы. Проверка и начисления — в Telegram. Фоновая передача зависит от разрешений iPhone; после прогулки можно обновить вручную." to "Steps saved and synced. Rewards are shown in Telegram. Background sync depends on iPhone permissions; refresh manually after a walk.",
++ "Фоновая передача приостановлена системой. Сохранённые шаги отправятся позже." to "The system paused background sync. Saved steps will be sent later.",
++ "Шагомер приостановлен. Сохранённые шаги доступны для передачи." to "Step tracking paused. Saved steps are available to sync.",
++ "Привязка и местные шаги удалены. Для отзыва доступа отключи телефон в Telegram." to "Pairing and local steps deleted. Disconnect the phone in Telegram to revoke access.",
++ "Шаги учитываются с момента включения. Носи телефон с собой. При открытии Walker восстановит доступную историю за последние семь дней." to "Steps count from when tracking is enabled. Carry your phone. Opening Walker restores available history from the last seven days.",
++ "Подключить Telegram" to "Connect Telegram",
++ "В Telegram открой раздел «Подключение» и получи код привязки." to "Open Connection in Telegram and get a pairing code.",
++ "Одноразовый код из Walker" to "One-time code from Walker",
++ "Привязать телефон" to "Pair phone",
++ "Передача шагов" to "Step sync",
++ "Обновить шаги и передать" to "Refresh and sync steps",
++ "Отключить и очистить местные шаги" to "Disconnect and clear local steps",
++ "Статус" to "Status",
++ "О данных" to "About your data",
++ "Передаются дата и число шагов, а также ограниченные технические коды ошибок, связанные с аккаунтом. Пароли и тексты переписки не передаются. Apple Health, маршруты и пульс не используются. Передача выполняется при открытом Walker; без интернета шаги сохраняются. Награды начисляются автоматически после синхронизации шагов." to "We send dates, step counts and limited account-linked diagnostic codes. Passwords and messages are not sent. Apple Health, routes and pulse are not used. Sync runs while Walker is open; steps are saved offline. Rewards are credited automatically after syncing.",
++ "При продолжении местные шаги прежнего аккаунта будут очищены. Серверная история останется в его Telegram-кошельке." to "Continuing clears the previous account's local steps. Server history remains in its Telegram wallet.",
++ "Привязка и ещё не переданные шаги будут удалены. Уже переданная история останется в Telegram." to "Pairing and unsent steps will be deleted. Synced history remains in Telegram."
++)
++fun walkerText(context:Context,value:String):String {
++ if(walkerLanguage(context)=="ru")return value
++ walkerEnglish[value]?.let{return it}
++ if(value.startsWith("Дней ожидают передачи: "))return "Days awaiting sync: "+value.substringAfter(": ")
++ if(value.contains("\n"))return value.split("\n").joinToString("\n"){walkerText(context,it)}
++ for((key,text)in walkerEnglish)if(key.endsWith(" ")&&value.startsWith(key))return text+walkerText(context,value.substring(key.length))
++ return if(Regex("[А-Яа-яЁё]").containsMatchIn(value))"Please retry or contact support in Telegram." else value
++}

@@ -1,0 +1,445 @@
+--- a/Wallker/PrivacyInfo.xcprivacy
++++ b/Wallker/PrivacyInfo.xcprivacy
+@@ -12,8 +12,55 @@
+ 				<string>CA92.1</string>
+ 			</array>
+ 		</dict>
++		<dict>
++			<key>NSPrivacyAccessedAPIType</key>
++			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
++			<key>NSPrivacyAccessedAPITypeReasons</key>
++			<array>
++				<string>35F9.1</string>
++			</array>
++		</dict>
+ 	</array>
+ 	<key>NSPrivacyTracking</key>
+ 	<false/>
++	<key>NSPrivacyCollectedDataTypes</key>
++	<array>
++		<dict>
++			<key>NSPrivacyCollectedDataType</key>
++			<string>NSPrivacyCollectedDataTypeFitness</string>
++			<key>NSPrivacyCollectedDataTypeLinked</key>
++			<true/>
++			<key>NSPrivacyCollectedDataTypeTracking</key>
++			<false/>
++			<key>NSPrivacyCollectedDataTypePurposes</key>
++			<array>
++				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
++			</array>
++		</dict>
++		<dict>
++			<key>NSPrivacyCollectedDataType</key>
++			<string>NSPrivacyCollectedDataTypeUserID</string>
++			<key>NSPrivacyCollectedDataTypeLinked</key>
++			<true/>
++			<key>NSPrivacyCollectedDataTypeTracking</key>
++			<false/>
++			<key>NSPrivacyCollectedDataTypePurposes</key>
++			<array>
++				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
++			</array>
++		</dict>
++		<dict>
++			<key>NSPrivacyCollectedDataType</key>
++			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
++			<key>NSPrivacyCollectedDataTypeLinked</key>
++			<true/>
++			<key>NSPrivacyCollectedDataTypeTracking</key>
++			<false/>
++			<key>NSPrivacyCollectedDataTypePurposes</key>
++			<array>
++				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
++			</array>
++		</dict>
++	</array>
+ </dict>
+ </plist>
+--- /dev/null
++++ b/Wallker/WalkerLanguage.swift
+@@ -0,0 +1,134 @@
++import Foundation
++
++private let walkerEnglish:[String:String]=[
++ "Не удалось сохранить привязку": "Could not save pairing",
++ "Разреши доступ к физической активности": "Allow motion access",
++ "В этом телефоне нет датчика шагов": "This phone has no step sensor",
++ "Шагомер Walker": "Walker step tracking",
++ "Walker считает шаги": "Walker is counting steps",
++ "Носи телефон с собой. Нажми, чтобы открыть.": "Carry your phone. Tap to open.",
++ "Приостановить": "Suspend",
++ "Не удалось включить датчик шагов": "Could not enable the step sensor",
++ "Шагомер работает": "Step tracking is running",
++ "Не удалось сохранить шаги": "Could not save steps",
++ "Время телефона изменилось. Данные сохранены; проверь дату и синхронизацию.": "Phone time changed. Data saved; check the date and sync.",
++ "изменилось": "changed",
++ "После перезагрузки открой Walker, чтобы возобновить шагомер.": "Open Walker after restarting to resume step tracking.",
++ "Разреши физическую активность в настройках телефона.": "Allow motion access in your phone settings.",
++ "Установи Telegram или браузер": "Install Telegram or a browser",
++ "Работа с выключенным экраном": "Tracking with the screen off",
++ "Разреши физическую активность и уведомления. В настройках батареи выбери «Без ограничений». На Xiaomi / POCO включи фоновый автозапуск Walker. После перезагрузки телефона открой приложение и проверь, что шагомер включён.": "Allow motion access and notifications. Choose unrestricted battery use. On Xiaomi / POCO enable Walker background autostart. After restarting, open Walker and check that step tracking is enabled.",
++ "Открыть настройки": "Open settings",
++ "Закрыть": "Close",
++ "Данные Walker": "Walker data",
++ "Шаги считаются датчиком телефона без GPS. На телефоне хранятся история шагов и неотправленные данные. После привязки даты и суммы шагов передаются по HTTPS на сервер Walker. Пароли, маршруты и данные карт не передаются. Очистка удаляет местные шаги и токен; серверная история остаётся в Telegram. Для отзыва доступа также отключи устройство в разделе «Подключение».": "Steps are counted by the phone sensor without GPS. Step history and unsent data are saved locally. After pairing, dates and step counts are sent over HTTPS to Walker. Passwords, routes and card details are not sent. Clearing deletes local steps and the access token; server history remains in Telegram. Also disconnect the device in Connection to revoke access.",
++ "Понятно": "Got it",
++ "Ш А Г О М Е Р  /  A N D R O I D": "S T E P S  /  A N D R O I D",
++ "БЕТА": "BETA",
++ "ШАГОМЕР": "STEP TRACKING",
++ "Шаги — здесь. Кошелёк — в Telegram.": "Steps here. Wallet in Telegram.",
++ "Приложение считает и передаёт шаги. Баланс, награды, задания и таппер доступны в Telegram.": "This app counts and sends steps. Balance, rewards, quests and tapping are available in Telegram.",
++ "Открыть кошелёк в Telegram": "Open wallet in Telegram",
++ "ТВОЙ АККАУНТ": "YOUR ACCOUNT",
++ "Подключение Telegram": "Telegram connection",
++ "Свяжи телефон с кошельком, чтобы передавать шаги.": "Pair your phone with your wallet to sync steps.",
++ "1. Открой Wallet → «Подключение» в Telegram.\n2. Получи код на 10 минут.\n3. Вставь все 48 символов сюда.": "1. Open Wallet → Connection in Telegram.\n2. Get a code for 10 minutes.\n3. Paste all 48 characters here.",
++ "Получить код в Telegram": "Get a code in Telegram",
++ "Вставь код привязки": "Paste your pairing code",
++ "Привязать Telegram": "Pair Telegram",
++ "При повторной привязке к тому же аккаунту местные шаги сохраняются. Telegram может быть на другом телефоне.": "Pairing the same account again preserves local steps. Telegram can be on another phone.",
++ "Шаги сегодня": "Steps today",
++ "СЕГОДНЯ": "TODAY",
++ "шагов на телефоне": "steps on your phone",
++ "Включить шагомер": "Enable step tracking",
++ "Шагомер приостановлен": "Step tracking paused",
++ "Носи телефон с собой. Шаги сохраняются даже без интернета.": "Carry your phone. Steps are saved offline too.",
++ "Синхронизация": "Sync",
++ "Передать сохранённые шаги": "Sync saved steps",
++ "Передадим шаги при доступной связи": "Steps will sync when connected",
++ "ПРИЛОЖЕНИЕ": "APP",
++ "Настройки": "Settings",
++ "Считай шаги в фоне": "Count steps in the background",
++ "Разреши уведомления, физическую активность и работу без ограничений батареи.": "Allow notifications, motion access and unrestricted battery use.",
++ "Настройки фоновой работы": "Background settings",
++ "Какие данные передаются": "What data is sent",
++ "Управление устройством": "Device management",
++ "Очистка удалит привязку и ещё не переданные шаги с этого телефона.": "Clearing deletes pairing and unsent steps from this phone.",
++ "Отключить и очистить": "Disconnect and clear",
++ "Очистить данные телефона?": "Clear phone data?",
++ "Местные шаги и привязка будут удалены. Уже переданная история останется в Telegram.": "Local steps and pairing will be deleted. Synced history remains in Telegram.",
++ "Очистить": "Clear",
++ "Для отзыва доступа отключи телефон также в Telegram": "Also disconnect the phone in Telegram to revoke access",
++ "Отмена": "Cancel",
++ "\nШагомер и передача шагов в Telegram.": "\nStep tracking and sync to Telegram.",
++ "Шагомер": "Step tracking",
++ "● ВКЛЮЧЁН": "● ENABLED",
++ "НА ПАУЗЕ": "PAUSED",
++ "Telegram подключён": "Telegram connected",
++ "Telegram не подключён": "Telegram not connected",
++ "Подключи Telegram с помощью кода выше": "Connect Telegram using the code above",
++ "Все сохранённые шаги переданы": "All saved steps have been sent",
++ "Шагомер включён": "Step tracking enabled",
++ "Шагомер выключен": "Step tracking disabled",
++ "Включи шагомер и разреши физическую активность": "Enable step tracking and allow motion access",
++ "Приостановить шагомер": "Pause step tracking",
++ "Подключаем…": "Connecting…",
++ "Обновить привязку Telegram": "Update Telegram pairing",
++ "Проверить смену аккаунта": "Check account change",
++ "Другой аккаунт Telegram": "Different Telegram account",
++ "Не удалось подтвердить, что это прежний аккаунт. ": "Could not confirm this is the previous account. ",
++ "Этот код выдан другому Telegram-аккаунту. ": "This code belongs to another Telegram account. ",
++ "При продолжении местные шаги прежнего аккаунта будут очищены. Уже переданная история останется в его Telegram-кошельке. Продолжить?": "Continuing clears the previous account's local steps. Synced history remains in its Telegram wallet. Continue?",
++ "Сменить аккаунт": "Switch account",
++ "Вставь полный код из Telegram": "Paste the full code from Telegram",
++ "Аккаунт изменился. Повтори привязку.": "Account changed. Pair the device again.",
++ "Аккаунт сменён. История нового кошелька загружена.": "Account changed. New wallet history loaded.",
++ "Привязка обновлена. Местные шаги сохранены.": "Pairing updated. Local steps preserved.",
++ "Не удалось привязать телефон": "Could not pair your phone",
++ "Слишком большой ответ сервера": "Server response too large",
++ "Доступ к серверу запрещён (HTTP 403, ответ не JSON). Передай это сообщение разработчику.": "Server access denied (HTTP 403, non-JSON response). Contact the developer.",
++ "Ошибка сервера": "Server error",
++ "Шаги синхронизированы.": "Steps synced.",
++ "Шаги переданы. Статус начисления — в Telegram.": "Steps sent. Check rewards in Telegram.",
++ "Привязка отозвана. Подключи Telegram заново.": "Pairing revoked. Connect Telegram again.",
++ "Шаги сохранены. Передача повторится позже.": "Steps saved. Sync will retry later.",
++ "Нет связи. Шаги сохранены на телефоне.": "No connection. Steps saved on your phone.",
++ "Включи шагомер. Подключение к Apple Health не требуется.": "Enable step tracking. Apple Health is not required.",
++ "Сервер временно недоступен": "Server temporarily unavailable",
++ "Вставь полный код из Telegram: 48 символов": "Paste the full 48-character code from Telegram",
++ "Не удалось создать ключ привязки": "Could not create pairing key",
++ "Не удалось проверить аккаунт": "Could not verify account",
++ "Неверный ответ сервера": "Invalid server response",
++ "Привязка обновлена. Шаги на телефоне сохранены.": "Pairing updated. Phone steps preserved.",
++ "Телефон привязан. Включи шагомер и передай шаги.": "Phone paired. Enable step tracking and sync your steps.",
++ "На этом устройстве нет доступного шагомера": "Step tracking is unavailable on this device",
++ "Шагомер включён. Носи iPhone с собой.": "Step tracking enabled. Carry your iPhone.",
++ "Шаги сохраняются на телефоне. Привяжи Telegram для начисления монет.": "Steps are saved on your phone. Pair Telegram to earn rewards.",
++ "Шаги сохранены и переданы. Проверка и начисления — в Telegram. Фоновая передача зависит от разрешений iPhone; после прогулки можно обновить вручную.": "Steps saved and synced. Rewards are shown in Telegram. Background sync depends on iPhone permissions; refresh manually after a walk.",
++ "Фоновая передача приостановлена системой. Сохранённые шаги отправятся позже.": "The system paused background sync. Saved steps will be sent later.",
++ "Шагомер приостановлен. Сохранённые шаги доступны для передачи.": "Step tracking paused. Saved steps are available to sync.",
++ "Привязка и местные шаги удалены. Для отзыва доступа отключи телефон в Telegram.": "Pairing and local steps deleted. Disconnect the phone in Telegram to revoke access.",
++ "Шаги учитываются с момента включения. Носи телефон с собой. При открытии Walker восстановит доступную историю за последние семь дней.": "Steps count from when tracking is enabled. Carry your phone. Opening Walker restores available history from the last seven days.",
++ "Подключить Telegram": "Connect Telegram",
++ "В Telegram открой раздел «Подключение» и получи код привязки.": "Open Connection in Telegram and get a pairing code.",
++ "Одноразовый код из Walker": "One-time code from Walker",
++ "Привязать телефон": "Pair phone",
++ "Передача шагов": "Step sync",
++ "Обновить шаги и передать": "Refresh and sync steps",
++ "Отключить и очистить местные шаги": "Disconnect and clear local steps",
++ "Статус": "Status",
++ "О данных": "About your data",
++ "Передаются дата и число шагов, а также ограниченные технические коды ошибок, связанные с аккаунтом. Пароли и тексты переписки не передаются. Apple Health, маршруты и пульс не используются. Передача выполняется при открытом Walker; без интернета шаги сохраняются. Награды начисляются автоматически после синхронизации шагов.": "We send dates, step counts and limited account-linked diagnostic codes. Passwords and messages are not sent. Apple Health, routes and pulse are not used. Sync runs while Walker is open; steps are saved offline. Rewards are credited automatically after syncing.",
++ "При продолжении местные шаги прежнего аккаунта будут очищены. Серверная история останется в его Telegram-кошельке.": "Continuing clears the previous account's local steps. Server history remains in its Telegram wallet.",
++ "Привязка и ещё не переданные шаги будут удалены. Уже переданная история останется в Telegram.": "Pairing and unsent steps will be deleted. Synced history remains in Telegram."
++]
++func WL(_ value:String)->String {
++ let language=UserDefaults.standard.string(forKey:"walker-language") ?? (Locale.preferredLanguages.first?.hasPrefix("ru")==true ? "ru":"en")
++ if language=="ru" {return value}
++ if let translated=walkerEnglish[value] {return translated}
++ if value.hasPrefix("Дней ожидают передачи: "){return "Days awaiting sync: "+value.components(separatedBy:": ").last!}
++ if value.contains("\n"){return value.components(separatedBy:"\n").map{WL($0)}.joined(separator:"\n")}
++ for (key,text) in walkerEnglish where key.hasSuffix(" ") && value.hasPrefix(key) {return text+WL(String(value.dropFirst(key.count)))}
++ if value.range(of:"[А-Яа-яЁё]",options:.regularExpression) != nil {return "Please retry or contact support in Telegram."}
++ return value
++}
+--- a/Wallker/WallkerApp.swift
++++ b/Wallker/WallkerApp.swift
+@@ -2,8 +2,17 @@
+ import CoreMotion
+ import Combine
+ import Security
++import BackgroundTasks
+ 
++enum BackgroundSync {
++ static let identifier="com.wallker.wallet.steps"
++ static func schedule(){BGTaskScheduler.shared.cancel(taskRequestWithIdentifier:identifier);let request=BGAppRefreshTaskRequest(identifier:identifier);request.earliestBeginDate=Date(timeIntervalSinceNow:15*60);try? BGTaskScheduler.shared.submit(request)}
++}
+ @main struct WallkerApp: App {
++ init(){BGTaskScheduler.shared.register(forTaskWithIdentifier:BackgroundSync.identifier,using:nil){task in
++  let work=Task { @MainActor in let model=WallkerModel();await model.refresh();task.setTaskCompleted(success:!Task.isCancelled) }
++  task.expirationHandler={work.cancel()}
++ }}
+     var body: some Scene { WindowGroup { WallkerView() } }
+ }
+ struct APIProblem: LocalizedError {
+@@ -20,7 +29,7 @@
+     }
+     static func save(_ token:String) throws {
+         let q:[String:Any] = [kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:"token"]
+-        let attributes:[String:Any] = [kSecValueData as String:Data(token.utf8), kSecAttrAccessible as String:kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
++        let attributes:[String:Any] = [kSecValueData as String:Data(token.utf8), kSecAttrAccessible as String:kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+         let status = SecItemUpdate(q as CFDictionary,attributes as CFDictionary)
+         if status == errSecItemNotFound {
+             var item=q; attributes.forEach { item[$0.key]=$0.value }
+@@ -48,6 +57,7 @@
+     @Published var tracking = false
+     @Published var pending = 0
+     @Published var confirmAccountChange = false
++    private var serverAnchor:(Date,TimeInterval)?
+     private var checkedAccountId: String?
+     private let pedometer = CMPedometer()
+     private var ledger: StepLedger
+@@ -86,8 +96,10 @@
+         if let token { req.setValue("Bearer \(token)",forHTTPHeaderField:"Authorization") }
+         req.httpBody = try JSONSerialization.data(withJSONObject:body)
+         let (data,response) = try await URLSession.shared.data(for:req)
++        guard data.count<=32768 else {throw APIProblem(message:"Слишком большой ответ сервера")}
+         guard let result = try? JSONSerialization.jsonObject(with:data) as? [String:Any] else { throw APIProblem(message:"Сервер временно недоступен") }
+         guard let http = response as? HTTPURLResponse,(200..<300).contains(http.statusCode) else { throw APIProblem(message:result["error"] as? String ?? "Ошибка сервера") }
++        if let now=result["serverNow"] as? Double {serverAnchor=(Date(timeIntervalSince1970:now/1000),ProcessInfo.processInfo.systemUptime)}
+         return result
+     }
+     func pair(allowAccountChange: Bool = false) async {
+@@ -96,14 +108,20 @@
+             let value=code.trimmingCharacters(in:.whitespacesAndNewlines)
+             guard value.range(of:"^[a-f0-9]{48}$",options:.regularExpression) != nil else { throw APIProblem(message:"Вставь полный код из Telegram: 48 символов") }
+             let previousToken=TokenStore.get()
+-            let check=try await request("api/device/pair",body:["code":value,"platform":"ios","checkOnly":true],token:previousToken)
++            let defaults=UserDefaults.standard
++            let existing=defaults.string(forKey:"walkerPairCode")==value ? defaults.string(forKey:"walkerPairNonce") : nil
++            var bytes=[UInt8](repeating:0,count:24)
++            guard existing != nil || SecRandomCopyBytes(kSecRandomDefault,bytes.count,&bytes)==errSecSuccess else {throw APIProblem(message:"Не удалось создать ключ привязки")}
++            let nonce=existing ?? bytes.map{String(format:"%02x",$0)}.joined()
++            defaults.set(value,forKey:"walkerPairCode");defaults.set(nonce,forKey:"walkerPairNonce")
++            let check=try await request("api/device/pair",body:["code":value,"platform":"ios","pairNonce":nonce,"checkOnly":true],token:previousToken)
+             guard let accountId=check["accountId"] as? String else { throw APIProblem(message:"Не удалось проверить аккаунт") }
+             let first=previousToken == nil && ledger.accountId == nil
+             let same=ledger.accountId.map { $0 == accountId } ?? (check["sameAccount"] as? Bool ?? false)
+             if !first && !same && (!allowAccountChange || checkedAccountId != accountId) {
+                 checkedAccountId=accountId; confirmAccountChange=true; return
+             }
+-            let r=try await request("api/device/pair",body:["code":value,"platform":"ios","expectedAccountId":accountId],token:previousToken)
++            let r=try await request("api/device/pair",body:["code":value,"platform":"ios","pairNonce":nonce,"expectedAccountId":accountId],token:previousToken)
+             guard let token=r["token"] as? String, let tz=r["timezone"] as? String,
+                   r["accountId"] as? String == accountId else { throw APIProblem(message:"Неверный ответ сервера") }
+             try TokenStore.save(token)
+@@ -113,10 +131,14 @@
+             // Server totals are acknowledgements, not additional steps on this phone.
+             for row in r["history"] as? [[String:Any]] ?? [] {
+                 if let day=row["day"] as? String,let count=row["steps"] as? Int {
++                    let missing=max(0,count-(ledger.totals[day] ?? 0))
++                    ledger.totals[day]=max(ledger.totals[day] ?? 0,count)
++                    ledger.baseline[day]=(ledger.baseline[day] ?? 0)+missing
+                     ledger.sent[day]=max(ledger.sent[day] ?? 0,count)
+                 }
+             }
+-            paired=true; code=""; checkedAccountId=nil; save()
++            if let link=r["botLink"] as? String,link.hasPrefix("https://t.me/"){UserDefaults.standard.set(link,forKey:"walkerBotLink")}
++            defaults.removeObject(forKey:"walkerPairCode");defaults.removeObject(forKey:"walkerPairNonce");paired=true; code=""; checkedAccountId=nil; save()
+             message=same ? "Привязка обновлена. Шаги на телефоне сохранены." : "Телефон привязан. Включи шагомер и передай шаги."
+         } catch { message=error.localizedDescription }
+     }
+@@ -129,18 +151,19 @@
+             _ = try await query(now.addingTimeInterval(-1),now) // System motion permission prompt.
+             if !ledger.enabled { ledger.started = now; ledger.baseline = ledger.totals; ledger.enabled = true }
+             tracking = true; save(); message = "Шагомер включён. Носи iPhone с собой."
+-        } catch { message = "Разреши Walker доступ к движению в настройках iPhone. \(error.localizedDescription)" }
++        } catch { UserDefaults.standard.set("motion_permission",forKey:"walkerDiagnostic");message = "Разреши Walker доступ к движению в настройках iPhone. \(error.localizedDescription)" }
+     }
+     private func readSteps() async throws {
+-        let now = Date(), today = calendar.startOfDay(for:now)
++        let now=serverAnchor.map { $0.0.addingTimeInterval(max(0,ProcessInfo.processInfo.systemUptime-$0.1)) } ?? Date(), today = calendar.startOfDay(for:now)
+         let oldest = calendar.date(byAdding:.day,value:-6,to:today)!
+         let oldestKey = day(oldest)
+-        ledger.totals = ledger.totals.filter { $0.key >= oldestKey }
+-        ledger.sent = ledger.sent.filter { $0.key >= oldestKey }
+-        ledger.baseline = ledger.baseline.filter { $0.key >= oldestKey }
++        ledger.totals = ledger.totals.filter { $0.key >= oldestKey || $0.value > (ledger.sent[$0.key] ?? 0) }
++        ledger.sent = ledger.sent.filter { $0.key >= oldestKey || ledger.totals[$0.key] != nil }
++        ledger.baseline = ledger.baseline.filter { $0.key >= oldestKey || ledger.totals[$0.key] != nil }
+         save()
+         guard ledger.enabled, let segmentStart = ledger.started else { return }
+         for offset in 0...6 {
++            try Task.checkCancellation()
+             let start = calendar.date(byAdding:.day,value:-offset,to:today)!
+             let end = min(calendar.date(byAdding:.day,value:1,to:start)!,now)
+             let from = max(start,segmentStart)
+@@ -151,18 +174,28 @@
+         }
+     }
+     func refresh() async {
+-        guard !busy else { return }; busy = true; defer { busy = false }
++        guard !busy else { return }; busy = true; defer { busy = false;if ledger.enabled || pending>0 {BackgroundSync.schedule()}else{BGTaskScheduler.shared.cancel(taskRequestWithIdentifier:BackgroundSync.identifier)} }
+         do {
++            if let token=TokenStore.get(){
++                _ = try? await request("api/device/state",body:[:],token:token)
++                if let code=UserDefaults.standard.string(forKey:"walkerDiagnostic") {
++                    if (try? await request("api/device/errors",body:["code":code,"version":"0.1.1"],token:token)) != nil {UserDefaults.standard.removeObject(forKey:"walkerDiagnostic")}
++                }
++            }
+             try await readSteps()
+             guard let token = TokenStore.get() else { message = "Шаги сохраняются на телефоне. Привяжи Telegram для начисления монет."; return }
++            let oldest=day(calendar.date(byAdding:.day,value:-6,to:calendar.startOfDay(for:Date()))!)
+             for key in ledger.totals.keys.sorted() {
++                try Task.checkCancellation()
++                guard key>=oldest && key<=day(Date()) else {continue}
+                 let value = ledger.totals[key] ?? 0
+                 guard value > (ledger.sent[key] ?? 0) else { continue }
+                 _ = try await request("api/device/steps",body:["day":key,"steps":value],token:token)
+                 ledger.sent[key] = value; save()
+             }
+-            message = "Шаги сохранены и переданы. Обнови баланс в Telegram."
+-        } catch { message = "Шаги остаются на телефоне. Повторим передачу при следующем открытии. \(error.localizedDescription)" }
++            message = "Шаги сохранены и переданы. Проверка и начисления — в Telegram. Фоновая передача зависит от разрешений iPhone; после прогулки можно обновить вручную."
++        } catch is CancellationError {message="Фоновая передача приостановлена системой. Сохранённые шаги отправятся позже."}
++        catch { UserDefaults.standard.set("sync_failed",forKey:"walkerDiagnostic");message = "Шаги остаются на телефоне. Повторим передачу при следующем открытии. \(error.localizedDescription)" }
+     }
+     func stop() async {
+         guard !busy else { return }; busy = true; defer { busy = false }
+@@ -175,43 +208,45 @@
+     }
+ }
+ struct WallkerView: View {
++    @AppStorage("walker-language") private var language = Locale.preferredLanguages.first?.hasPrefix("ru")==true ? "ru":"en"
+     @StateObject private var model = WallkerModel()
+     @Environment(\.scenePhase) private var scenePhase
+     @State private var confirmClear=false
+     private let timer = Timer.publish(every:60,on:.main,in:.common).autoconnect()
+     var body: some View {
+         NavigationStack { Form {
++            Picker("Language / Язык",selection:$language){Text("Русский").tag("ru");Text("English").tag("en")}.pickerStyle(.segmented)
+             Section {
+-                Text("Шаги — здесь. Кошелёк — в Telegram.").font(.headline)
+-                Link("Открыть кошелёк в Telegram",destination:URL(string:"https://t.me/wallker_wallet_bot")!)
+-            }
+-            Section("Шаги сегодня") {
+-                Text(model.steps.formatted()).font(.system(size:48,weight:.bold,design:.rounded))
+-                Text(model.tracking ? "Шагомер включён" : "Шагомер приостановлен")
+-                Button(model.tracking ? "Приостановить шагомер" : "Включить шагомер") { Task { if model.tracking { await model.stop() } else { await model.start(); await model.refresh() } } }.disabled(model.busy)
+-                Text("Шаги учитываются с момента включения. Носи телефон с собой. При открытии Walker восстановит доступную историю за последние семь дней.")
+-            }
+-            Section(model.paired ? "Обновить привязку Telegram" : "Подключить Telegram") {
+-                Text(model.paired ? "Telegram подключён" : "В Telegram открой раздел «Телефон» и получи код привязки.")
+-                TextField("Одноразовый код из Walker",text:$model.code).textInputAutocapitalization(.never).autocorrectionDisabled()
+-                Button("Привязать телефон") { Task { await model.pair() } }.disabled(model.busy || model.code.count != 48)
+-            }
+-            Section("Передача шагов") {
+-                Text("Дней ожидают передачи: \(model.pending)")
+-                Button("Обновить шаги и передать") { Task { await model.refresh() } }.disabled(model.busy || !model.paired)
+-                Button("Отключить и очистить местные шаги",role:.destructive) { confirmClear=true }.disabled(model.busy)
+-            }
+-            Section("Статус") { if model.busy { ProgressView() }; Text(model.message) }
+-            Section("О данных") { Text("Передаются только дата и число шагов. Apple Health, маршруты и пульс не используются. Передача выполняется при открытом Walker; без интернета шаги сохраняются. WC — игровые монеты бета-версии без вывода.") }
+-        }.navigationTitle("Walker Wallet") }.preferredColorScheme(.dark).tint(Color(red:0.76,green:0.95,blue:0.30))
+-        .alert("Другой аккаунт Telegram",isPresented:$model.confirmAccountChange) {
+-            Button("Сменить аккаунт",role:.destructive) { Task { await model.pair(allowAccountChange:true) } }
+-            Button("Отмена",role:.cancel) {}
+-        } message: { Text("При продолжении местные шаги прежнего аккаунта будут очищены. Серверная история останется в его Telegram-кошельке.") }
+-        .alert("Очистить данные телефона?",isPresented:$confirmClear) {
+-            Button("Очистить",role:.destructive) { model.unlink() }
+-            Button("Отмена",role:.cancel) {}
+-        } message: { Text("Привязка и ещё не переданные шаги будут удалены. Уже переданная история останется в Telegram.") }
++                Text(WL("Шаги — здесь. Кошелёк — в Telegram.")).font(.headline)
++                Link(WL("Открыть кошелёк в Telegram"),destination:URL(string:UserDefaults.standard.string(forKey:"walkerBotLink") ?? "https://t.me/wallker_wallet_bot")!)
++            }
++            Section(WL("Шаги сегодня")) {
++                Text(model.steps.formatted(.number.locale(Locale(identifier:language)))).font(.system(size:48,weight:.bold,design:.rounded))
++                Text(model.tracking ? WL("Шагомер включён") : WL("Шагомер приостановлен"))
++                Button(model.tracking ? WL("Приостановить шагомер") : WL("Включить шагомер")) { Task { if model.tracking { await model.stop() } else { await model.start(); await model.refresh() } } }.disabled(model.busy)
++                Text(WL("Шаги учитываются с момента включения. Носи телефон с собой. При открытии Walker восстановит доступную историю за последние семь дней."))
++            }
++            Section(model.paired ? WL("Обновить привязку Telegram") : WL("Подключить Telegram")) {
++                Text(model.paired ? WL("Telegram подключён") : WL("В Telegram открой раздел «Подключение» и получи код привязки."))
++                TextField(WL("Одноразовый код из Walker"),text:$model.code).textInputAutocapitalization(.never).autocorrectionDisabled()
++                Button(WL("Привязать телефон")) { Task { await model.pair() } }.disabled(model.busy || model.code.count != 48)
++            }
++            Section(WL("Передача шагов")) {
++                Text(WL("Дней ожидают передачи: \(model.pending)"))
++                Button(WL("Обновить шаги и передать")) { Task { await model.refresh() } }.disabled(model.busy || !model.paired)
++                Button(WL("Отключить и очистить местные шаги"),role:.destructive) { confirmClear=true }.disabled(model.busy)
++            }
++            Section(WL("Статус")) { if model.busy { ProgressView() }; Text(WL(model.message)) }
++            Section(WL("О данных")) { Text(WL("Передаются дата и число шагов, а также ограниченные технические коды ошибок, связанные с аккаунтом. Пароли и тексты переписки не передаются. Apple Health, маршруты и пульс не используются. Передача выполняется при открытом Walker; без интернета шаги сохраняются. Награды начисляются автоматически после синхронизации шагов.")) }
++        }.navigationTitle("Walker Wallet") }.environment(\.locale,Locale(identifier:language)).preferredColorScheme(.dark).tint(Color(red:0.76,green:0.95,blue:0.30))
++        .alert(WL("Другой аккаунт Telegram"),isPresented:$model.confirmAccountChange) {
++            Button(WL("Сменить аккаунт"),role:.destructive) { Task { await model.pair(allowAccountChange:true) } }
++            Button(WL("Отмена"),role:.cancel) {}
++        } message: { Text(WL("При продолжении местные шаги прежнего аккаунта будут очищены. Серверная история останется в его Telegram-кошельке.")) }
++        .alert(WL("Очистить данные телефона?"),isPresented:$confirmClear) {
++            Button(WL("Очистить"),role:.destructive) { model.unlink() }
++            Button(WL("Отмена"),role:.cancel) {}
++        } message: { Text(WL("Привязка и ещё не переданные шаги будут удалены. Уже переданная история останется в Telegram.")) }
+         .task { await model.refresh() }
+         .onChange(of:scenePhase) { _,phase in if phase == .active { Task { await model.refresh() } } }
+         .onReceive(timer) { _ in if scenePhase == .active { Task { await model.refresh() } } }
+--- /dev/null
++++ b/Wallker/en.lproj/InfoPlist.strings
+@@ -0,0 +1 @@
++"NSMotionUsageDescription" = "Walker uses the system pedometer to count steps. After pairing, dates and step counts are sent to Walker for game rewards.";
+--- /dev/null
++++ b/Wallker/ru.lproj/InfoPlist.strings
+@@ -0,0 +1 @@
++"NSMotionUsageDescription" = "Walker использует системный шагомер для подсчёта шагов. После привязки дата и число шагов передаются на сервер для игровых наград.";
+--- a/project.yml
++++ b/project.yml
+@@ -8,8 +8,8 @@
+     SWIFT_VERSION: '5.0'
+     DEVELOPMENT_TEAM: ''
+     PRODUCT_BUNDLE_IDENTIFIER: com.wallker.wallet.ios
+-    MARKETING_VERSION: '0.1.0'
+-    CURRENT_PROJECT_VERSION: '1'
++    MARKETING_VERSION: '0.1.1'
++    CURRENT_PROJECT_VERSION: '2'
+     TARGETED_DEVICE_FAMILY: '1'
+     CODE_SIGN_STYLE: Automatic
+     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+@@ -25,6 +25,8 @@
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+         NSMotionUsageDescription: Walker использует системный шагомер для подсчёта шагов. После привязки Telegram дата и число шагов передаются на сервер Walker для игровых монет.
++        BGTaskSchedulerPermittedIdentifiers: [com.wallker.wallet.steps]
++        UIBackgroundModes: [fetch]
+         UILaunchScreen: {}
+         UIApplicationSceneManifest:
+           UIApplicationSupportsMultipleScenes: false
